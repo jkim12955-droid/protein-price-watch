@@ -7,23 +7,20 @@ jobs:
     env:
       PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
+        with:
+          python-version: "3.12"
       - name: 러너 IP
-        run: curl -sS -m 10 https://api.ipify.org; echo
+        run: |
+          echo -n "runner_ip="
+          curl -sS -m 10 https://api.ipify.org || true
+          echo
       - name: 같은 IP 에서 curl 과 python 을 번갈아
         run: |
-          U_ENC=$(python3 -c "import urllib.parse,os;print(urllib.parse.quote(os.environ['PRICE_API_KEY'],safe=''))")
-          U="https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey=$U_ENC&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
-          for i in 1 2; do
-            curl -sS -o /dev/null -m 20 -w "curl$i  code=%{http_code} total=%{time_total}s\n" "$U" || echo "curl$i  실패"
-            python3 -c "
-import os,sys,time,urllib.request
-t=time.time()
-try:
-    with urllib.request.urlopen(sys.argv[1], timeout=20) as r: b=r.read()
-    print(f'py$i    code={r.status} total={time.time()-t:.2f}s {len(b)}B')
-except Exception as e:
-    print(f'py$i    실패 {time.time()-t:.2f}s {type(e).__name__}')
-" "$U"
-          done
+          ENC=$(python3 -c "import urllib.parse,os;print(urllib.parse.quote(os.environ['PRICE_API_KEY'],safe=''))")
+          U="https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey=$ENC&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
+          curl -sS -o /dev/null -m 20 -w "curl1  code=%{http_code} %{time_total}s\n" "$U" || echo "curl1  실패"
+          python3 tools/_probe.py "py1  "
+          curl -sS -o /dev/null -m 20 -w "curl2  code=%{http_code} %{time_total}s\n" "$U" || echo "curl2  실패"
+          python3 tools/_probe.py "py2  "
