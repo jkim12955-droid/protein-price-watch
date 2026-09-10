@@ -1,0 +1,17 @@
+# 인증키. 절대 커밋하지 않는다
+.env
+*.key
+secrets*.json
+
+# 파생물. 원본에서 다시 만들 수 있다 (python pw.py load)
+data/pricewatch.db
+data/*.db
+data/_*.log
+data/raw/_*.json
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

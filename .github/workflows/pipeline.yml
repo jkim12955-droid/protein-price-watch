@@ -1,0 +1,75 @@
+name: 단백질 가격 비교기
+
+on:
+  schedule:
+    - cron: "30 0 * * *"    # 매일 09:30 KST. 새 조사일이 생겼는지 확인하고 있으면 받는다
+    - cron: "0 0 * * 1"     # 월요일 09:00 KST. 주간 리포트
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "특정 조사일자를 강제로 받으려면 YYYYMMDD 를 공백으로 구분해 입력"
+        required: false
+
+permissions:
+  contents: write           # 수집한 원본과 리포트를 저장소에 다시 커밋한다
+
+concurrency:
+  group: pricewatch
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
+      NUTRIENT_API_KEY: ${{ secrets.NUTRIENT_API_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      TZ: Asia/Seoul
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 표준 라이브러리만 쓴다. 설치 단계가 없다.
+
+      - name: 수집 (새 조사일이 있을 때만 받는다)
+        run: |
+          if [ -n "${{ github.event.inputs.dates }}" ]; then
+            python pw.py collect --date ${{ github.event.inputs.dates }}
+          else
+            python pw.py collect
+          fi
+
+      - name: 적재 (원본 전체를 멱등하게 다시 넣는다)
+        run: python pw.py load
+
+      - name: 자동 점검 (임계값을 넘으면 여기서 실패한다)
+        run: python pw.py qa
+
+      - name: 주간 리포트 (월요일에만 만든다. 수동 실행이면 바로 만든다)
+        id: report
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python pw.py report --force --any-day
+          else
+            python pw.py report
+          fi
+
+      - name: 결과 커밋
+        run: |
+          git config user.name  "pricewatch-bot"
+          git config user.email "pricewatch-bot@users.noreply.github.com"
+          git add data/raw data/state.json data/nutrient_search_cache.json data/qa_latest.json data/report_latest.json reports docs 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "커밋할 변경 없음"
+          else
+            git commit -m "자동 실행: $(date +'%Y-%m-%d %H:%M KST')"
+            git push
+          fi
+
+      - name: 슬랙 알림 (월요일 실행이나 수동 실행에서. 리포트가 없으면 없다고 한 줄 보낸다)
+        if: github.event.schedule == '0 0 * * 1' || github.event_name == 'workflow_dispatch'
+        run: python pw.py notify --report "${{ steps.report.outputs.report_path }}"
