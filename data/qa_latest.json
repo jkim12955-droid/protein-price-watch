@@ -1,8 +1,8 @@
 {
- "run_at": "2026-09-10T18:44:59",
+ "run_at": "2026-09-10T20:27:32",
  "survey_day": "20260828",
  "previous_day": "20260807",
- "overall": "fail",
+ "overall": "warn",
  "checks": [
   {
    "name": "조사 공백",
@@ -41,10 +41,10 @@
   },
   {
    "name": "매칭률",
-   "status": "fail",
-   "value": null,
-   "threshold": "-",
-   "message": "매칭을 아직 돌리지 않았다 (python pw.py match)"
+   "status": "ok",
+   "value": "83/98",
+   "threshold": "warn<60% fail<40%",
+   "message": "단백질 순위 대상 상품 98개(사람이 뺀 10개 제외) 중 83개에 영양 항목이 붙었다 (85%)"
   },
   {
    "name": "가격 급변",

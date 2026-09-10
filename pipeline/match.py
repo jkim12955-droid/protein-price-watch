@@ -130,6 +130,11 @@ def category_ok(cand: dict, rule: dict | None, good_name: str, generic_forbid: l
     for w in generic_forbid:
         if norm(w) in cname and norm(w) not in gname:
             return False
+    if rule and rule.get("protein_range"):
+        lo, hi = rule["protein_range"]
+        p = _num(cand.get("AMT_NUM3"))
+        if p is None or p < lo or p > hi:
+            return False
     return True
 
 
@@ -158,7 +163,9 @@ def auto_match(good: dict, rule: dict | None, generic_forbid: list[str], searche
                 best, best_score = i, sc
         if best_score >= 0.99:
             break
-    if best and best_score >= 0.6:
+    # 부분 매칭은 분류 규칙(require)이 있는 소분류에서만, 단어가 75% 이상 겹칠 때만 받는다.
+    # 규칙이 없는 분류는 이름이 정확히 같을 때만 잇는다. 사이다가 단백질 음료로 이어지는 일을 막기 위해서다.
+    if best and best_score >= 0.75 and rule and rule.get("require"):
         return best, "partial", round(best_score, 2)
     return None, "unmatched", 0.0
 
@@ -225,7 +232,8 @@ def run(*, refresh: bool = False) -> dict:
     if api.NUTRIENT_FAILURES:
         print(f"경고: 재시도 후에도 실패한 검색어 {len(api.NUTRIENT_FAILURES)}개: {api.NUTRIENT_FAILURES[:10]}")
 
-    # 요약표
+    # 요약표. 매칭률의 분모는 '단백질 순위 대상 소분류'의 상품 중 사람이 제외하지 않은 것이다.
+    protein_codes = {k for k, v in rules.items() if v.get("protein") is True}
     rows = con.execute("""
         SELECT g.smlcls_code, COUNT(*) total,
                SUM(CASE WHEN m.food_cd IS NOT NULL THEN 1 ELSE 0 END) matched,
@@ -234,19 +242,26 @@ def run(*, refresh: bool = False) -> dict:
         FROM goods g JOIN matches m USING(good_id)
         WHERE g.smlcls_code LIKE '0301%' OR g.smlcls_code LIKE '0302%'
         GROUP BY 1 ORDER BY 1""").fetchall()
-    total = sum(r[1] for r in rows); matched = sum(r[2] for r in rows); unm = sum(r[3] for r in rows); exc = sum(r[4] for r in rows)
-    eligible = total - exc
-    summary = {"total_food": total, "matched": matched, "unmatched": unm, "excluded": exc,
-               "eligible": eligible, "match_rate_of_eligible": round(matched / eligible, 4) if eligible else None,
+    total = sum(r[1] for r in rows); matched_all = sum(r[2] for r in rows); unm_all = sum(r[3] for r in rows)
+    prow = [r for r in rows if r[0] in protein_codes]
+    p_total = sum(r[1] for r in prow); p_matched = sum(r[2] for r in prow); p_exc = sum(r[4] for r in prow); p_unm = sum(r[3] for r in prow)
+    eligible = p_total - p_exc
+    summary = {"total_food": total, "matched_all": matched_all, "unmatched_all": unm_all,
+               "protein_target_goods": p_total, "protein_excluded_manual": p_exc, "eligible": eligible,
+               "matched": p_matched, "unmatched": p_unm,
+               "match_rate_of_eligible": round(p_matched / eligible, 4) if eligible else None,
                "stats": stats, "api_calls_nutrient": api.CALLS["nutrient"]}
+    matched, unm, exc = p_matched, p_unm, p_exc
 
     # 문서
-    lines = ["# 매칭 결과", "", f"실행 {now}. 식품 {total}개 중 영양 항목이 붙은 것 {matched}개, 미매칭 {unm}개, 제외 {exc}개.",
-             f"제외를 뺀 대상 {eligible}개 기준 매칭률 {matched/eligible*100:.1f}%." if eligible else "",
+    lines = ["# 매칭 결과", "", f"실행 {now}. 식품 {total}개 전체에 매칭을 시도해 {matched_all}개에 영양 항목이 붙었다.",
+             f"단백질 순위 대상 소분류의 상품은 {p_total}개이고 그중 사람이 뺀 {exc}개를 제외한 {eligible}개 기준으로 {matched}개가 붙어 매칭률 {matched/eligible*100:.1f}%, 미매칭 {unm}개." if eligible else "",
+             "순위 대상이 아닌 분류(밀가루·과자·음료·조미료 등)는 계산은 하되 매칭률에 넣지 않는다.",
              "", "방법별: " + ", ".join(f"{k} {v}" for k, v in stats.items() if v), "",
              "| 소분류 | 상품 | 매칭 | 미매칭 | 제외 |", "|---|---|---|---|---|"]
     for code, t, mm, u, e in rows:
-        lines.append(f"| {code} {rules.get(code, {}).get('label', '')} | {t} | {mm} | {u} | {e} |")
+        tag = "순위대상" if code in protein_codes else ""
+        lines.append(f"| {code} {rules.get(code, {}).get('label', '')} {tag} | {t} | {mm} | {u} | {e} |")
     lines += ["", "## 미매칭 상품", ""]
     for gid, code, name in con.execute("""SELECT g.good_id, g.smlcls_code, g.good_name FROM matches m JOIN goods g USING(good_id)
                                           WHERE m.method='unmatched' ORDER BY g.smlcls_code, g.good_name"""):

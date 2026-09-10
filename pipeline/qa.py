@@ -88,10 +88,15 @@ def check_coverage(con, th, day):
 
 
 def check_match_rate(con, th):
-    r = con.execute("""SELECT SUM(CASE WHEN m.food_cd IS NOT NULL THEN 1 ELSE 0 END),
-                              SUM(CASE WHEN m.method LIKE 'excluded%' THEN 1 ELSE 0 END), COUNT(*)
-                       FROM matches m JOIN goods g USING(good_id)
-                       WHERE g.smlcls_code LIKE '0301%' OR g.smlcls_code LIKE '0302%'""").fetchone()
+    from .metrics import protein_categories
+    codes = sorted(protein_categories())
+    if not codes:
+        return {"name": "매칭률", "status": "fail", "value": None, "threshold": "-", "message": "순위 대상 소분류가 config 에 없다"}
+    q = ",".join("?" * len(codes))
+    r = con.execute(f"""SELECT SUM(CASE WHEN m.food_cd IS NOT NULL THEN 1 ELSE 0 END),
+                               SUM(CASE WHEN m.method LIKE 'excluded%' THEN 1 ELSE 0 END), COUNT(*)
+                        FROM matches m JOIN goods g USING(good_id)
+                        WHERE g.smlcls_code IN ({q})""", codes).fetchone()
     matched, excluded, total = (r[0] or 0), (r[1] or 0), (r[2] or 0)
     if total == 0:
         return {"name": "매칭률", "status": "fail", "value": None, "threshold": "-", "message": "매칭을 아직 돌리지 않았다 (python pw.py match)"}
@@ -100,7 +105,7 @@ def check_match_rate(con, th):
     t = th["match_rate_min"]
     status = "fail" if ratio < t["fail"] else "warn" if ratio < t["warn"] else "ok"
     return {"name": "매칭률", "status": status, "value": f"{matched}/{eligible}", "threshold": f"warn<{t['warn']:.0%} fail<{t['fail']:.0%}",
-            "message": f"대상 {eligible}개 중 {matched}개에 영양 항목이 붙었다 ({ratio:.0%}). 제외 {excluded}개"}
+            "message": f"단백질 순위 대상 상품 {eligible}개(사람이 뺀 {excluded}개 제외) 중 {matched}개에 영양 항목이 붙었다 ({ratio:.0%})"}
 
 
 def check_price_jump(con, th, day, prev):

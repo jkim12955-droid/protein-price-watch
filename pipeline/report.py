@@ -11,7 +11,7 @@ import os
 
 from . import api, qa
 from .load import connect
-from .metrics import good_metrics, rankable, survey_dates
+from .metrics import good_metrics, rankable, not_ranked_but_cheap, survey_dates
 
 CFG = api.ROOT / "config"
 REPORTS = api.ROOT / "reports"
@@ -73,6 +73,11 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         L.append(f"| {i} | {r['good_name']} | {r['label']} | {_won(r['price_per_100g'])} | {r['protein']:.1f} | **{r['won_per_g']:,.1f}원**{chg} | {r['n_stores']} | {r['dc_share']:.0%} | {method_ko.get(r['method'], r['method'])} |")
     L.append("")
     L.append("괄호 안은 이전 조사 대비 단백질 1g당 가격 변화다. 판매점 수가 적은 상품은 중앙값이 흔들릴 수 있다.")
+    cheap_out = not_ranked_but_cheap(rows, th["protein_min_per_100g"])
+    if cheap_out:
+        L.append("")
+        L.append("순위 대상이 아닌데 숫자만 보면 더 싼 것도 있다. " + ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in cheap_out) +
+                 ". 밀가루나 국수처럼 단백질이 들어는 있지만 단백질원으로 먹지 않는 것들이라 뺐다. 이 기준은 config/categories.json 에 있다.")
     L.append("")
 
     # 2. 기준선

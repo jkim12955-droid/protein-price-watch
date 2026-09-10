@@ -15,9 +15,17 @@ def survey_dates(con: sqlite3.Connection) -> list[str]:
     return [r[0] for r in con.execute("SELECT DISTINCT inspect_day FROM prices ORDER BY 1")]
 
 
+def _rules() -> dict:
+    return json.loads((CFG / "categories.json").read_text(encoding="utf8"))["rules"]
+
+
 def labels() -> dict[str, str]:
-    cats = json.loads((CFG / "categories.json").read_text(encoding="utf8"))["rules"]
-    return {k: v.get("label", "") for k, v in cats.items()}
+    return {k: v.get("label", "") for k, v in _rules().items()}
+
+
+def protein_categories() -> set[str]:
+    """단백질원으로 먹는 소분류. 이 밖의 상품은 계산은 하되 순위에 올리지 않는다."""
+    return {k for k, v in _rules().items() if v.get("protein") is True}
 
 
 def good_metrics(con: sqlite3.Connection, day: str) -> list[dict]:
@@ -61,4 +69,13 @@ def good_metrics(con: sqlite3.Connection, day: str) -> list[dict]:
 
 
 def rankable(rows: list[dict], protein_min: float) -> list[dict]:
-    return sorted([r for r in rows if r["won_per_g"] is not None and (r["protein"] or 0) >= protein_min], key=lambda r: r["won_per_g"])
+    cats = protein_categories()
+    return sorted([r for r in rows if r["won_per_g"] is not None and (r["protein"] or 0) >= protein_min and r["smlcls_code"] in cats],
+                  key=lambda r: r["won_per_g"])
+
+
+def not_ranked_but_cheap(rows: list[dict], protein_min: float, n: int = 5) -> list[dict]:
+    """순위 대상이 아닌데 단백질 1g당 가격이 싼 것. 리포트에 '이런 것도 있지만 뺐다'로 적는다."""
+    cats = protein_categories()
+    return sorted([r for r in rows if r["won_per_g"] is not None and (r["protein"] or 0) >= protein_min and r["smlcls_code"] not in cats],
+                  key=lambda r: r["won_per_g"])[:n]
