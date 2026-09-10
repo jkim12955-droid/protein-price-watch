@@ -1,0 +1,28 @@
+name: 연결 진단 (임시)
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: DNS
+        run: |
+          getent ahosts apis.data.go.kr || true
+          echo "--- A ---";    dig +short A apis.data.go.kr    || true
+          echo "--- AAAA ---"; dig +short AAAA apis.data.go.kr || true
+      - name: TCP 443 도달성
+        run: |
+          for h in apis.data.go.kr www.data.go.kr; do
+            echo "== $h =="
+            timeout 20 bash -c "cat < /dev/null > /dev/tcp/$h/443" && echo "  TCP 443 열림" || echo "  TCP 443 실패"
+          done
+      - name: curl 강제 IPv4 / IPv6
+        run: |
+          echo "== IPv4 =="; curl -4 -sS -o /dev/null -m 25 -w 'code=%{http_code} connect=%{time_connect}s total=%{time_total}s\n' "https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc" || echo "  IPv4 실패"
+          echo "== IPv6 =="; curl -6 -sS -o /dev/null -m 25 -w 'code=%{http_code} total=%{time_total}s\n' "https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc" || echo "  IPv6 실패(없으면 정상)"
+      - name: 다른 공공데이터 호스트도 같은가
+        run: |
+          curl -4 -sS -o /dev/null -m 25 -w 'api.odcloud.kr code=%{http_code} total=%{time_total}s\n' https://api.odcloud.kr/ || echo "  odcloud 실패"
+          curl -4 -sS -o /dev/null -m 25 -w 'www.data.go.kr code=%{http_code} total=%{time_total}s\n' https://www.data.go.kr/ || echo "  data.go.kr 실패"
+      - name: 러너 위치
+        run: curl -sS -m 15 https://ipinfo.io/json || true
