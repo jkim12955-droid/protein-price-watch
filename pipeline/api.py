@@ -80,6 +80,24 @@ SSL_FALLBACK_USED = False
 ON_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
 
 
+class Unreachable(RuntimeError):
+    """참가격 서버가 이 IP 에서 오는 연결을 받지 않는 상태.
+
+    실측한 것: apis.data.go.kr 은 GitHub 러너가 받는 애저 IP 대역 일부에서 오는
+    TCP 연결을 거절하지 않고 그냥 버린다. 같은 시각에 IP 가 다른 러너는 1.5초 만에 200 을 받는다.
+    curl 이든 파이썬이든 똑같이 막히므로 클라이언트 문제가 아니다.
+    러너 IP 는 실행마다 바뀌니 이건 고장이 아니라 확률이다. 그래서 따로 이름을 붙여
+    호출하는 쪽이 '오늘은 건너뛴다' 로 다룰 수 있게 한다.
+    """
+
+
+def _is_timeout(e: BaseException) -> bool:
+    import socket
+    reason = getattr(e, "reason", None)
+    return isinstance(e, (TimeoutError, socket.timeout)) or isinstance(reason, (TimeoutError, socket.timeout)) \
+        or "timed out" in str(e).lower()
+
+
 def mask(text) -> str:
     """로그와 예외 메시지에서 인증키를 가린다.
 
@@ -114,6 +132,8 @@ def http_get(url: str, *, timeout: int = 60, retries: int = 3) -> str:
                 continue  # 재시도 횟수를 소모하지 않고 바로 다시
             attempt += 1
             time.sleep(1.5 * attempt)
+    if _is_timeout(last):
+        raise Unreachable(f"연결이 닿지 않는다({retries}회 모두 시간 초과): {mask(url)[:160]}")
     raise RuntimeError(f"GET 실패({retries}회): {mask(url)[:160]} :: {mask(last)}")
 
 
@@ -170,8 +190,11 @@ def fetch_prices_for_good(inspect_day: str, good_id: str | int) -> list[dict]:
 def has_survey(inspect_day: str, probe_good_id: str | int = 1000) -> bool:
     """그 날짜에 조사 데이터가 있는지 1건만 물어 확인한다."""
     CALLS["price"] += 1
+    # 조사일이 있는지만 묻는 요청이라 짧게 끊는다.
+    # 서버가 응답할 IP 라면 1~2초에 오고, 막힌 IP 라면 아무리 기다려도 오지 않는다.
     text = http_get(_price_url("getProductPriceInfoSvc", numOfRows=1, pageNo=1,
-                               goodInspectDay=inspect_day, goodId=str(probe_good_id)))
+                               goodInspectDay=inspect_day, goodId=str(probe_good_id)),
+                    timeout=20, retries=2)
     code, _, recs = parse_price_xml(text)
     return code in (None, "00") and len(recs) > 0
 

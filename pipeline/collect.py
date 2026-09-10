@@ -35,6 +35,18 @@ def _iso(d8: str) -> str:
     return f"{d8[:4]}-{d8[4:6]}-{d8[6:]}"
 
 
+def reachable() -> bool:
+    """참가격 서버가 이 IP 에서 오는 연결을 받는지 한 번 물어본다.
+
+    받지 않으면 그 실행에서는 무엇을 해도 안 되므로, 606회를 시도하기 전에 먼저 확인한다.
+    """
+    try:
+        api.has_survey("20260828", PROBE_GOOD_ID)
+        return True
+    except api.Unreachable:
+        return False
+
+
 def discover_new_dates(today: dt.date | None = None) -> list[str]:
     """마지막으로 아는 조사일 다음 날부터 오늘까지 하루씩 물어 새 조사일을 찾는다."""
     today = today or dt.date.today()
@@ -117,6 +129,13 @@ def collect_date(d8: str, *, force: bool = False) -> dict:
 def run(*, dates: list[str] | None = None, force: bool = False) -> list[dict]:
     """CLI 진입점. 날짜를 주면 그 날짜만, 안 주면 새 조사일을 찾아 수집한다."""
     if dates is None:
+        if not reachable():
+            # 이 실행이 받은 IP 에서는 참가격이 응답하지 않는다. 고장이 아니라 확률이다.
+            # 여기서 실패로 처리하면 멀쩡한 날에도 실패 알림이 울린다.
+            # 대신 아무것도 안 하고 물러난다. 며칠씩 계속 못 받으면 조사 공백 점검이 잡아낸다.
+            print("참가격이 이 실행의 IP 에서 응답하지 않는다. 수집을 건너뛴다. "
+                  "(며칠 이어지면 점검의 조사 공백 항목이 잡는다)")
+            return []
         dates = discover_new_dates()
         if not dates:
             state = _load_state()

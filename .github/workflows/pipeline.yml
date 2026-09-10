@@ -2,7 +2,11 @@ name: 단백질 가격 비교기
 
 on:
   schedule:
-    - cron: "30 0 * * *"    # 매일 09:30 KST. 새 조사일이 생겼는지 확인하고 있으면 받는다
+    # 하루 세 번 확인한다. 참가격 서버가 GitHub 러너의 IP 대역 일부를 조용히 막아서,
+    # 한 번만 시도하면 세 번에 한 번꼴로 헛돈다. 실측한 내용은 docs/build-log.md 에 있다.
+    - cron: "30 0 * * *"    # 매일 09:30 KST
+    - cron: "30 4 * * *"    # 매일 13:30 KST
+    - cron: "30 10 * * *"   # 매일 19:30 KST
     - cron: "0 0 * * 1"     # 월요일 09:00 KST. 주간 리포트
   workflow_dispatch:
     inputs:

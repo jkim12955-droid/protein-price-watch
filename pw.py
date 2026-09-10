@@ -31,7 +31,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.cmd == "collect":
-        collect.run(dates=a.date or None, force=a.force)
+        try:
+            collect.run(dates=a.date or None, force=a.force)
+        except api.Unreachable as e:
+            # 수집 도중에 끊긴 경우다. 이미 받아둔 조사분으로 리포트는 만들 수 있으므로
+            # 여기서 파이프라인을 세우지 않는다. 받다 만 조사일은 다음 실행이 다시 받는다.
+            print(f"수집 중단: {e}", file=sys.stderr)
+            print("이미 받아둔 조사분으로 이어서 진행한다.")
     elif a.cmd == "load":
         load.run(dates=a.date or None)
     elif a.cmd == "match":
