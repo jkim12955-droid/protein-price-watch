@@ -19,7 +19,7 @@ LATEST = api.DATA / "report_latest.json"
 
 WATCH = [  # 따로 지켜보는 여덟 품목 (워크북 A-3)
     ("계란", ["030101001"]), ("참치캔", ["030202004"]), ("두부", ["030201008"]), ("훈제오리", ["030203010"]),
-    ("슬라이스 치즈", ["030203007"]), ("프로틴 드링크", ["030206024"]), ("쇠고기 불고기", ["030101002"]), ("돼지고기 삼겹살", ["030101004"]),
+    ("슬라이스 치즈", ["030203007"]), ("프로틴 드링크", ["030206024"]), ("쇠고기 불고기", ["030101002"]), ("돼지고기(삼겹살·목살)", ["030101004"]),
 ]
 
 
@@ -133,16 +133,20 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     L.append("")
 
     # 6. 한계
+    from .metrics import protein_categories
+    pcats = protein_categories()
     unmatched = [r for r in rows if r["method"] == "unmatched"]
+    unmatched_p = [r for r in unmatched if r["smlcls_code"] in pcats]
     excluded = [r for r in rows if r["method"].startswith("excluded")]
     approx = [r for r in rows if r["method"] == "manual" and r.get("match_note") and "근사" in r["match_note"]]
     L.append("## 6. 못 하는 것과 조심할 것")
     L.append("")
-    L.append(f"영양 항목을 못 붙인 상품이 {len(unmatched)}개다. 상품명이 브랜드식이라 식약처 DB 이름과 안 맞는 것들이다. 이 상품들은 순위에 없다.")
+    L.append(f"순위 대상 상품 중 영양 항목을 못 붙인 것이 {len(unmatched_p)}개다" + (": " + ", ".join(r["good_name"] for r in unmatched_p[:8]) + ("." if len(unmatched_p) <= 8 else " 등.") if unmatched_p else ".") +
+             f" 상품명이 브랜드식이라 식약처 DB 이름과 안 맞는 것들이라 순위에 없다. 순위 대상이 아닌 분류까지 치면 {len(unmatched)}개인데 대부분 과자와 음료와 조미료라 리포트에는 영향이 없다.")
     L.append(f"일부러 뺀 상품이 {len(excluded)}개다. 조미료와 과자와 음료처럼 단백질로 먹지 않는 분류, 뼈 포함 무게인 통닭, 영양 DB 에 원재료가 없는 오징어와 연어와 조기가 여기 든다.")
     if approx:
         L.append("근사값으로 이은 상품: " + ", ".join(f"{r['good_name']}({r['match_note'].split('.')[0].split('→')[-1].strip()})" for r in approx[:6]) + ".")
-    L.append("계란은 설명이 빈 상품에 개당 52g 을 썼다. 쇠고기 불고기는 부위가 특정되지 않아 앞다리 값을 썼다. 자동·부분 매칭은 단어가 60% 이상 겹치는 항목이라 틀릴 수 있다. 의심스러우면 docs/match_report.md 의 검토용 표를 본다.")
+    L.append("계란은 설명이 빈 상품에 개당 52g 을 썼다. 쇠고기 불고기는 부위가 특정되지 않아 앞다리 값을 썼다. 자동·부분 매칭은 단어가 75% 이상 겹치고 분류가 맞는 항목을 고른 것이라 틀릴 수 있다. 의심스러우면 docs/match_report.md 의 검토용 표를 본다.")
     L.append(f"하림 훈제 닭가슴살은 참가격에 없어 가격을 내가 직접 넣는다. 가공식품의 영양은 제조사 표시값이고 원재료는 식품성분표 값이라 기준이 조금 다르다.")
     L.append("")
     L.append("출처: 한국소비자원 참가격(공공데이터포털 15158701, 공공저작물 제1유형), 식품의약품안전처 식품영양성분DB(15127578). 코드와 원본은 저장소에 있다.")
