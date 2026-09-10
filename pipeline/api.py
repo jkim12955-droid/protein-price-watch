@@ -45,6 +45,7 @@ NUTRI_BASE = "https://apis.data.go.kr/1471000/FoodNtrCpntDbInfo02"
 
 # 호출 횟수를 세어 둔다. 하루 한도(가격 2,000 / 영양 10,000) 감시용.
 CALLS = {"price": 0, "nutrient": 0}
+NUTRIENT_FAILURES: list[str] = []   # 재시도 후에도 실패한 검색어
 
 
 def _context(insecure: bool) -> ssl.SSLContext:
@@ -164,16 +165,35 @@ def has_survey(inspect_day: str, probe_good_id: str | int = 1000) -> bool:
 # ---------------------------------------------------------------- 영양성분 (JSON)
 
 def nutrient_get(**params) -> tuple[int, list[dict]]:
-    """식품영양성분DB 조회. (totalCount, items) 를 돌려준다."""
+    """식품영양성분DB 조회. (totalCount, items) 를 돌려준다.
+
+    서버가 가끔 resultCode 01 'System Error!!' 를 돌려준다. 그 경우 간격을 두고 세 번까지 다시 묻고,
+    그래도 안 되면 빈 결과를 돌려준다. 한 이름의 실패가 전체 실행을 멈추지 않게 하기 위해서다.
+    """
     q = {"serviceKey": NUTRI_KEY, "type": "json", "pageNo": 1, "numOfRows": 100, **params}
-    CALLS["nutrient"] += 1
-    text = http_get(f"{NUTRI_BASE}/getFoodNtrCpntDbInq02?" + urllib.parse.urlencode(q))
-    data = json.loads(text)
-    header = data.get("header", {})
-    if header.get("resultCode") not in (None, "00"):
-        raise RuntimeError(f"영양 API 오류 {header}")
-    body = data.get("body", {}) or {}
-    return int(body.get("totalCount", 0) or 0), list(body.get("items", []) or [])
+    url = f"{NUTRI_BASE}/getFoodNtrCpntDbInq02?" + urllib.parse.urlencode(q)
+    last = None
+    for attempt in range(3):
+        CALLS["nutrient"] += 1
+        try:
+            text = http_get(url)
+            data = json.loads(text)
+        except (RuntimeError, json.JSONDecodeError) as e:
+            last = e
+            time.sleep(2.0 * (attempt + 1))
+            continue
+        header = data.get("header", {}) or {}
+        code = header.get("resultCode")
+        if code in (None, "00"):
+            body = data.get("body", {}) or {}
+            return int(body.get("totalCount", 0) or 0), list(body.get("items", []) or [])
+        if code == "03":  # NODATA_ERROR: 결과 없음은 정상
+            return 0, []
+        last = RuntimeError(f"영양 API 오류 {header}")
+        time.sleep(2.0 * (attempt + 1))
+    print(f"경고: 영양 API 조회 실패, 빈 결과로 진행 ({params.get('FOOD_NM_KR')!r}): {last}", file=sys.stderr)
+    NUTRIENT_FAILURES.append(str(params.get("FOOD_NM_KR")))
+    return 0, []
 
 
 def nutrient_search(name: str, rows: int = 100, page: int = 1) -> tuple[int, list[dict]]:

@@ -78,6 +78,7 @@ class Searcher:
     def __init__(self):
         self.cache = _load_json(CACHE) if CACHE.exists() else {}
         self.dirty = False
+        self.pending = 0
 
     def search(self, name: str) -> list[dict]:
         if name in self.cache:
@@ -88,12 +89,16 @@ class Searcher:
         slim = [{k: i.get(k) for k in keep} for i in items]
         self.cache[name] = slim
         self.dirty = True
+        self.pending += 1
+        if self.pending >= 50:      # 중간에 죽어도 호출한 만큼은 남긴다
+            self.save()
         return slim
 
     def save(self):
         if self.dirty:
             CACHE.parent.mkdir(parents=True, exist_ok=True)
             CACHE.write_text(json.dumps(self.cache, ensure_ascii=False), encoding="utf8")
+            self.pending = 0
 
 
 def _num(v):
@@ -174,47 +179,51 @@ def run(*, refresh: bool = False) -> dict:
     now = dt.datetime.now().isoformat(timespec="seconds")
     stats = {"manual": 0, "exact": 0, "partial": 0, "fallback": 0, "excluded_manual": 0, "excluded_category": 0, "unmatched": 0, "skipped_cached": 0}
     unmatched: list[tuple] = []
-    with con:
-        for g in goods:
-            gid, name, code = g["good_id"], g["good_name"], g["smlcls_code"] or ""
-            if gid in done:
-                stats["skipped_cached"] += 1
-                continue
-            rule = rules.get(code)
-            food_cd, method, score, note = None, "unmatched", 0.0, None
+    for idx, g in enumerate(goods, 1):
+        gid, name, code = g["good_id"], g["good_name"], g["smlcls_code"] or ""
+        if gid in done:
+            stats["skipped_cached"] += 1
+            continue
+        rule = rules.get(code)
+        food_cd, method, score, note = None, "unmatched", 0.0, None
 
-            if gid in manual:
-                m = manual[gid]
-                if m.get("exclude"):
-                    method, note = "excluded_manual", m.get("note")
-                else:
-                    rec = r1ref.get(m["food_cd"])
-                    if rec is None:
-                        raise RuntimeError(f"manual_match 의 food_cd {m['food_cd']} 가 참고표에 없다 (good {gid} {name})")
-                    upsert_nutrient(con, rec)
-                    food_cd, method, score, note = m["food_cd"], "manual", 1.0, m.get("note")
-            elif rule and rule.get("protein") is False:
-                method, note = "excluded_category", f"{rule.get('label')}: 단백질 순위 대상이 아님"
+        if gid in manual:
+            m = manual[gid]
+            if m.get("exclude"):
+                method, note = "excluded_manual", m.get("note")
             else:
-                rec, method, score = auto_match(g, rule, generic_forbid, searcher)
-                if rec is not None:
-                    upsert_nutrient(con, rec)
-                    food_cd = rec["FOOD_CD"]
-                elif rule and rule.get("fallback_food_cd"):
-                    fb = rule["fallback_food_cd"]
-                    fbrec = r1ref.get(fb)
-                    if fbrec is None:
-                        # 참고표에 없으면 이름으로 한 번 찾아본다(두부 등 P 그룹 품목대표)
-                        hits = [i for i in searcher.search(rule.get("label", "")) if i.get("FOOD_CD") == fb]
-                        fbrec = hits[0] if hits else None
-                    if fbrec:
-                        upsert_nutrient(con, fbrec)
-                        food_cd, method, score, note = fb, "fallback", 0.5, f"{rule.get('label')} 소분류 기본 항목"
-            if method == "unmatched":
-                unmatched.append((gid, code, name))
-            stats[method] += 1
-            con.execute("INSERT OR REPLACE INTO matches VALUES (?,?,?,?,?,?)", (gid, food_cd, method, score, note, now))
+                rec = r1ref.get(m["food_cd"])
+                if rec is None:
+                    raise RuntimeError(f"manual_match 의 food_cd {m['food_cd']} 가 참고표에 없다 (good {gid} {name})")
+                upsert_nutrient(con, rec)
+                food_cd, method, score, note = m["food_cd"], "manual", 1.0, m.get("note")
+        elif rule and rule.get("protein") is False:
+            method, note = "excluded_category", f"{rule.get('label')}: 단백질 순위 대상이 아님"
+        else:
+            rec, method, score = auto_match(g, rule, generic_forbid, searcher)
+            if rec is not None:
+                upsert_nutrient(con, rec)
+                food_cd = rec["FOOD_CD"]
+            elif rule and rule.get("fallback_food_cd"):
+                fb = rule["fallback_food_cd"]
+                fbrec = r1ref.get(fb)
+                if fbrec is None:
+                    # 참고표에 없으면 이름으로 한 번 찾아본다(두부 등 P 그룹 품목대표)
+                    hits = [i for i in searcher.search(rule.get("label", "")) if i.get("FOOD_CD") == fb]
+                    fbrec = hits[0] if hits else None
+                if fbrec:
+                    upsert_nutrient(con, fbrec)
+                    food_cd, method, score, note = fb, "fallback", 0.5, f"{rule.get('label')} 소분류 기본 항목"
+        if method == "unmatched":
+            unmatched.append((gid, code, name))
+        stats[method] += 1
+        con.execute("INSERT OR REPLACE INTO matches VALUES (?,?,?,?,?,?)", (gid, food_cd, method, score, note, now))
+        con.commit()                      # 상품 하나마다 남긴다. 중단되면 다음 실행이 이어서 한다
+        if idx % 50 == 0:
+            print(f"  … {idx}/{len(goods)} 상품, 영양 API {api.CALLS['nutrient']}회", flush=True)
     searcher.save()
+    if api.NUTRIENT_FAILURES:
+        print(f"경고: 재시도 후에도 실패한 검색어 {len(api.NUTRIENT_FAILURES)}개: {api.NUTRIENT_FAILURES[:10]}")
 
     # 요약표
     rows = con.execute("""
@@ -239,7 +248,8 @@ def run(*, refresh: bool = False) -> dict:
     for code, t, mm, u, e in rows:
         lines.append(f"| {code} {rules.get(code, {}).get('label', '')} | {t} | {mm} | {u} | {e} |")
     lines += ["", "## 미매칭 상품", ""]
-    for gid, code, name in unmatched:
+    for gid, code, name in con.execute("""SELECT g.good_id, g.smlcls_code, g.good_name FROM matches m JOIN goods g USING(good_id)
+                                          WHERE m.method='unmatched' ORDER BY g.smlcls_code, g.good_name"""):
         lines.append(f"- {gid} {code} {name}")
     lines += ["", "## 자동 매칭 결과 (검토용)", "", "| 상품 | 방법 | 점수 | 영양 항목 | 제조사 | 단백질 g/100g |", "|---|---|---|---|---|---|"]
     for r in con.execute("""SELECT g.good_name, m.method, m.score, n.food_name, n.maker, n.protein
