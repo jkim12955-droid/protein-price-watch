@@ -4,25 +4,40 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
     steps:
-      - name: DNS
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: curl 로 실제 요청 (키 포함, 값은 출력하지 않는다)
         run: |
-          getent ahosts apis.data.go.kr || true
-          echo "--- A ---";    dig +short A apis.data.go.kr    || true
-          echo "--- AAAA ---"; dig +short AAAA apis.data.go.kr || true
-      - name: TCP 443 도달성
+          U="https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey=$(python3 -c "import urllib.parse,os;print(urllib.parse.quote(os.environ['PRICE_API_KEY'],safe=''))")&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
+          curl -sS -o /tmp/c.xml -m 30 -w 'curl 기본UA code=%{http_code} total=%{time_total}s\n' "$U" || echo "  curl 실패"
+          head -c 200 /tmp/c.xml; echo
+      - name: python urllib, 기본 UA
         run: |
-          for h in apis.data.go.kr www.data.go.kr; do
-            echo "== $h =="
-            timeout 20 bash -c "cat < /dev/null > /dev/tcp/$h/443" && echo "  TCP 443 열림" || echo "  TCP 443 실패"
-          done
-      - name: curl 강제 IPv4 / IPv6
+          python3 - <<'PY'
+          import os, time, urllib.parse, urllib.request
+          k = urllib.parse.quote(os.environ["PRICE_API_KEY"], safe="")
+          u = f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
+          t = time.time()
+          try:
+              with urllib.request.urlopen(u, timeout=25) as r:
+                  print(f"기본UA 성공 {r.status} {time.time()-t:.2f}s", r.read()[:120])
+          except Exception as e:
+              print(f"기본UA 실패 {time.time()-t:.2f}s :: {type(e).__name__}: {e}")
+          PY
+      - name: python urllib, 브라우저 UA
         run: |
-          echo "== IPv4 =="; curl -4 -sS -o /dev/null -m 25 -w 'code=%{http_code} connect=%{time_connect}s total=%{time_total}s\n' "https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc" || echo "  IPv4 실패"
-          echo "== IPv6 =="; curl -6 -sS -o /dev/null -m 25 -w 'code=%{http_code} total=%{time_total}s\n' "https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc" || echo "  IPv6 실패(없으면 정상)"
-      - name: 다른 공공데이터 호스트도 같은가
-        run: |
-          curl -4 -sS -o /dev/null -m 25 -w 'api.odcloud.kr code=%{http_code} total=%{time_total}s\n' https://api.odcloud.kr/ || echo "  odcloud 실패"
-          curl -4 -sS -o /dev/null -m 25 -w 'www.data.go.kr code=%{http_code} total=%{time_total}s\n' https://www.data.go.kr/ || echo "  data.go.kr 실패"
-      - name: 러너 위치
-        run: curl -sS -m 15 https://ipinfo.io/json || true
+          python3 - <<'PY'
+          import os, time, urllib.parse, urllib.request
+          k = urllib.parse.quote(os.environ["PRICE_API_KEY"], safe="")
+          u = f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
+          req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (compatible; protein-price-watch/1.0)", "Accept": "*/*"})
+          t = time.time()
+          try:
+              with urllib.request.urlopen(req, timeout=25) as r:
+                  print(f"브라우저UA 성공 {r.status} {time.time()-t:.2f}s", r.read()[:120])
+          except Exception as e:
+              print(f"브라우저UA 실패 {time.time()-t:.2f}s :: {type(e).__name__}: {e}")
+          PY
