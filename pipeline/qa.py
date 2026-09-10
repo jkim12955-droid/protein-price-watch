@@ -61,7 +61,8 @@ def check_rows(con, th):
 
 
 def check_tieout(con):
-    r = con.execute("SELECT inspect_day, raw_count, loaded_count, dup_in_raw, ok FROM load_log ORDER BY loaded_at DESC LIMIT 1").fetchone()
+    # 가장 최근 조사일의 마지막 적재 기록을 본다 (적재 순서가 아니라 조사일 기준)
+    r = con.execute("SELECT inspect_day, raw_count, loaded_count, dup_in_raw, ok FROM load_log ORDER BY inspect_day DESC, loaded_at DESC LIMIT 1").fetchone()
     if not r:
         return {"name": "원본 대조", "status": "fail", "value": None, "threshold": "일치", "message": "적재 기록이 없다"}
     day, raw, loaded, dup, ok = r
@@ -70,7 +71,7 @@ def check_tieout(con):
 
 
 def check_duplicates(con):
-    r = con.execute("SELECT inspect_day, dup_in_raw FROM load_log ORDER BY loaded_at DESC LIMIT 1").fetchone()
+    r = con.execute("SELECT inspect_day, dup_in_raw FROM load_log ORDER BY inspect_day DESC, loaded_at DESC LIMIT 1").fetchone()
     dup = r[1] if r else 0
     return {"name": "원본 중복", "status": "warn" if dup else "ok", "value": dup, "threshold": "0",
             "message": f"같은 조사일·판매점·상품이 원본에 {dup}번 겹침" if dup else "겹치는 행 없음"}
