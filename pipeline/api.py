@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -74,6 +75,19 @@ def _is_cert_error(e: BaseException) -> bool:
 
 SSL_FALLBACK_USED = False
 
+# GitHub Actions 같은 CI 에서는 인증서가 정상이므로 우회를 켜지 않는다.
+# 우회가 조용히 켜지면 중간자 공격을 눈치채지 못한다.
+ON_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
+
+
+def mask(text) -> str:
+    """로그와 예외 메시지에서 인증키를 가린다.
+
+    URL 인코딩된 키는 GitHub 의 시크릿 마스킹에 걸리지 않는다(원본 문자열과 다르다).
+    그래서 우리 쪽에서 먼저 지운다.
+    """
+    return re.sub(r"(serviceKey=|ServiceKey=)[^&\s]+", r"\1***", str(text))
+
 
 def http_get(url: str, *, timeout: int = 60, retries: int = 3) -> str:
     """GET 한 번. 실패하면 간격을 늘려가며 다시 시도한다.
@@ -92,7 +106,7 @@ def http_get(url: str, *, timeout: int = 60, retries: int = 3) -> str:
                 return r.read().decode("utf8", "replace")
         except Exception as e:  # noqa: BLE001 - 아래에서 종류별로 가른다
             last = e
-            if not insecure and _is_cert_error(e):
+            if not insecure and _is_cert_error(e) and not ON_CI:
                 insecure = True
                 if not SSL_FALLBACK_USED:
                     print("경고: 인증서 검증 실패. 이 실행은 검증 없이 계속한다. (로컬 파이썬 인증서 문제)", file=sys.stderr)
@@ -100,7 +114,7 @@ def http_get(url: str, *, timeout: int = 60, retries: int = 3) -> str:
                 continue  # 재시도 횟수를 소모하지 않고 바로 다시
             attempt += 1
             time.sleep(1.5 * attempt)
-    raise RuntimeError(f"GET 실패({retries}회): {url[:120]}... :: {last}")
+    raise RuntimeError(f"GET 실패({retries}회): {mask(url)[:160]} :: {mask(last)}")
 
 
 # ---------------------------------------------------------------- 참가격 (XML)
@@ -191,7 +205,7 @@ def nutrient_get(**params) -> tuple[int, list[dict]]:
             return 0, []
         last = RuntimeError(f"영양 API 오류 {header}")
         time.sleep(2.0 * (attempt + 1))
-    print(f"경고: 영양 API 조회 실패, 빈 결과로 진행 ({params.get('FOOD_NM_KR')!r}): {last}", file=sys.stderr)
+    print(f"경고: 영양 API 조회 실패, 빈 결과로 진행 ({params.get('FOOD_NM_KR')!r}): {mask(last)}", file=sys.stderr)
     NUTRIENT_FAILURES.append(str(params.get("FOOD_NM_KR")))
     return 0, []
 

@@ -185,7 +185,12 @@ def run(*, today: dt.date | None = None) -> dict:
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf8")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / f"{today.isoformat()}_qa.md").write_text(as_markdown(result), encoding="utf8")
+    # 실행일이 아니라 기준으로 삼은 조사일로 이름을 짓는다.
+    # 매일 돌아도 같은 조사분이면 같은 파일에 덮어쓰므로, 격주 조사에 맞춰 한 해 26장만 쌓인다.
+    # 실행일로 지으면 새 데이터가 없는 날에도 파일이 하나씩 생겨 1년이면 365장이 된다.
+    day = result.get("survey_day")
+    stem = f"{day[:4]}-{day[4:6]}-{day[6:]}" if day else today.isoformat()
+    (OUT_DIR / f"{stem}_qa.md").write_text(as_markdown(result), encoding="utf8")
     return result
 
 

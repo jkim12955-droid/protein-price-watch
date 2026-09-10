@@ -7,7 +7,7 @@
   python pw.py qa                                         자동 점검. fail 이면 종료 코드 1
   python pw.py report  [--force] [--any-day]              주간 리포트 (월요일, 새 조사분이 있을 때)
   python pw.py notify  [--report PATH] [--text ...]       슬랙 알림
-  python pw.py calls                                      이번 실행의 API 호출 수
+  python pw.py calls                                      조사일별로 실제 쓴 API 호출 수
 
 단계를 나눈 이유: 어디서 깨졌는지 보이게 하고, 깨진 단계만 다시 돌리기 위해서다(A12).
 """
@@ -46,6 +46,15 @@ def main(argv=None):
         report.run(force=a.force, monday_only=not a.any_day)
     elif a.cmd == "notify":
         notify.run(report_path=a.report, text=a.text)
+    elif a.cmd == "calls":
+        # 호출 수는 프로세스마다 0 에서 시작하므로 이 자리에서 세면 늘 0 이다.
+        # 수집할 때 meta.json 에 적어 둔 실제 값을 읽는다. 하루 2,000회 한도를 볼 때 쓴다.
+        for meta in sorted(api.RAW.glob("*/meta.json")):
+            m = json.loads(meta.read_text(encoding="utf8"))
+            print(f"{m['inspect_day']}  가격 {m.get('api_calls_price', 0):>5}회  "
+                  f"상품 {m.get('n_goods', 0)}개  가격 {m.get('n_prices', 0):,}건  "
+                  f"실패 {m.get('n_goods_failed', 0)}개")
+        return
     print(f"API 호출: 가격 {api.CALLS['price']}회, 영양 {api.CALLS['nutrient']}회", file=sys.stderr)
 
 

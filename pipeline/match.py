@@ -22,23 +22,6 @@ from .load import connect
 CFG = api.ROOT / "config"
 CACHE = api.DATA / "nutrient_search_cache.json"
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS nutrients (
-  food_cd   TEXT PRIMARY KEY,
-  food_name TEXT, db_grp TEXT, db_class TEXT, cat1 TEXT, cat2 TEXT, ref_nm TEXT,
-  kcal REAL, protein REAL, fat REAL, carb REAL,
-  serving TEXT, weight TEXT, maker TEXT, fetched_at TEXT
-);
-CREATE TABLE IF NOT EXISTS matches (
-  good_id    INTEGER PRIMARY KEY,
-  food_cd    TEXT,            -- NULL 이면 미매칭 또는 제외
-  method     TEXT NOT NULL,   -- manual / exact / partial / fallback / excluded_manual / excluded_category / unmatched
-  score      REAL,
-  note       TEXT,
-  matched_at TEXT NOT NULL
-);
-"""
-
 STOP = {"오리지널", "오리지날", "클래식", "순한맛", "매운맛", "마일드", "용기", "실속", "기획", "복합기획", "증정", "오리지널맛"}
 
 
@@ -177,7 +160,6 @@ def run(*, refresh: bool = False) -> dict:
     r1ref = {r["FOOD_CD"]: r for r in _load_json(CFG / "nutrient_r1_reference.json")}
 
     con = connect()
-    con.executescript(SCHEMA)
     goods = [dict(zip(["good_id", "good_name", "smlcls_code"], r)) for r in
              con.execute("SELECT good_id, good_name, smlcls_code FROM goods WHERE smlcls_code LIKE '0301%' OR smlcls_code LIKE '0302%' ORDER BY smlcls_code, good_name")]
     done = {} if refresh else {r[0]: r[1] for r in con.execute("SELECT good_id, method FROM matches")}

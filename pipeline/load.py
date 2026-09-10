@@ -61,6 +61,23 @@ CREATE TABLE IF NOT EXISTS load_log (
   dup_in_raw   INTEGER,
   ok           INTEGER
 );
+-- 매칭 결과는 match 단계가 채우지만 표 자체는 여기서 만든다.
+-- 새로 clone 한 저장소에서 match 를 건너뛰고 qa 나 report 를 돌려도
+-- "no such table" 로 죽지 않고 "매칭 0건" 으로 정직하게 보이게 하려는 것이다.
+CREATE TABLE IF NOT EXISTS nutrients (
+  food_cd   TEXT PRIMARY KEY,
+  food_name TEXT, db_grp TEXT, db_class TEXT, cat1 TEXT, cat2 TEXT, ref_nm TEXT,
+  kcal REAL, protein REAL, fat REAL, carb REAL,
+  serving TEXT, weight TEXT, maker TEXT, fetched_at TEXT
+);
+CREATE TABLE IF NOT EXISTS matches (
+  good_id    INTEGER PRIMARY KEY,
+  food_cd    TEXT,            -- NULL 이면 미매칭 또는 제외
+  method     TEXT NOT NULL,   -- manual / exact / partial / fallback / excluded_manual / excluded_category / unmatched
+  score      REAL,
+  note       TEXT,
+  matched_at TEXT NOT NULL
+);
 """
 
 

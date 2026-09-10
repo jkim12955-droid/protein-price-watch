@@ -59,7 +59,16 @@ def collect_date(d8: str, *, force: bool = False) -> dict:
     """한 조사일의 상품·판매점·가격 전체를 받아 저장한다. 요약을 돌려준다."""
     out = api.RAW / _iso(d8)
     prices_path = out / "prices.json.gz"
-    if (prices_path.exists() or (out / "prices.json").exists()) and not force:
+    plain = out / "prices.json"
+    if plain.exists() and not prices_path.exists():
+        # 압축을 넣기 전에 받아둔 조사일이 있으면 여기서 옮긴다.
+        # API 를 606회 다시 부르는 대신 파일만 바꾼다.
+        rows = json.loads(plain.read_text(encoding="utf8"))
+        with gzip.open(prices_path, "wt", encoding="utf8") as fh:
+            json.dump(rows, fh, ensure_ascii=False)
+        plain.unlink()
+        print(f"[{d8}] 비압축 원본을 압축본으로 옮겼다 ({len(rows):,}건)", file=sys.stderr)
+    if prices_path.exists() and not force:
         meta = json.loads((out / "meta.json").read_text(encoding="utf8"))
         return {**meta, "skipped": True}
 
@@ -75,7 +84,7 @@ def collect_date(d8: str, *, force: bool = False) -> dict:
         try:
             prices.extend(api.fetch_prices_for_good(d8, gid))
         except Exception as e:  # 한 상품 실패로 전체를 버리지 않는다. 기록하고 계속.
-            failed.append(f"{gid}: {e}")
+            failed.append(api.mask(f"{gid}: {type(e).__name__}: {e}")[:200])
         if i % 100 == 0:
             print(f"  … {i}/{len(goods)} 상품, 가격 {len(prices)}건", file=sys.stderr)
 
@@ -111,7 +120,10 @@ def run(*, dates: list[str] | None = None, force: bool = False) -> list[dict]:
         dates = discover_new_dates()
         if not dates:
             state = _load_state()
-            state["last_run"] = dt.datetime.now().isoformat(timespec="seconds")
+            # 새 조사일이 없던 날에도 state.json 이 바뀌면 매일 봇 커밋이 하나씩 나간다.
+            # 격주로 오는 진짜 기록이 그 잡음에 묻히므로, 실행 시각은 추적하지 않는 파일에 적는다.
+            (api.DATA / "_last_run.txt").write_text(
+                dt.datetime.now().isoformat(timespec="seconds"), encoding="utf8")
             _save_state(state)
             print("새 조사일자 없음. 수집할 것이 없다.")
             return []

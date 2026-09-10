@@ -20,7 +20,7 @@ concurrency:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
       NUTRIENT_API_KEY: ${{ secrets.NUTRIENT_API_KEY }}
@@ -33,18 +33,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      # 표준 라이브러리만 쓴다. 설치 단계가 없다.
+      # 설치 단계가 없다. 표준 라이브러리만 쓴다.
 
       - name: 수집 (새 조사일이 있을 때만 받는다)
+        env:
+          # 입력값을 run 안에 직접 넣으면 임의 명령이 실행될 수 있다.
+          # 환경변수로 건네 셸이 해석하지 못하게 한다.
+          DATES: ${{ inputs.dates }}
         run: |
-          if [ -n "${{ github.event.inputs.dates }}" ]; then
-            python pw.py collect --date ${{ github.event.inputs.dates }}
+          if [ -n "$DATES" ]; then
+            python pw.py collect --date $DATES --force
           else
             python pw.py collect
           fi
 
       - name: 적재 (원본 전체를 멱등하게 다시 넣는다)
         run: python pw.py load
+
+      - name: 매칭 (상품에 영양 항목을 잇는다. 캐시가 있어 새 상품만 조회한다)
+        run: python pw.py match
 
       - name: 자동 점검 (임계값을 넘으면 여기서 실패한다)
         run: python pw.py qa
@@ -58,18 +65,30 @@ jobs:
             python pw.py report
           fi
 
-      - name: 결과 커밋
+      - name: 결과 커밋 (점검이 실패해도 증거는 남긴다)
+        if: always()
         run: |
           git config user.name  "pricewatch-bot"
           git config user.email "pricewatch-bot@users.noreply.github.com"
-          git add data/raw data/state.json data/nutrient_search_cache.json data/qa_latest.json data/report_latest.json reports docs 2>/dev/null || true
+          git add data/raw data/state.json data/nutrient_search_cache.json \
+                  data/qa_latest.json data/report_latest.json reports docs
           if git diff --cached --quiet; then
             echo "커밋할 변경 없음"
           else
             git commit -m "자동 실행: $(date +'%Y-%m-%d %H:%M KST')"
-            git push
+            # 사이에 다른 커밋이 들어왔으면 한 번 당겨서 다시 민다
+            git push || (git pull --rebase && git push)
           fi
 
-      - name: 슬랙 알림 (월요일 실행이나 수동 실행에서. 리포트가 없으면 없다고 한 줄 보낸다)
-        if: github.event.schedule == '0 0 * * 1' || github.event_name == 'workflow_dispatch'
-        run: python pw.py notify --report "${{ steps.report.outputs.report_path }}"
+      - name: 슬랙 알림 (성공이든 실패든 보낸다)
+        if: always() && (github.event.schedule == '0 0 * * 1' || github.event_name == 'workflow_dispatch' || failure())
+        env:
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_PATH: ${{ steps.report.outputs.report_path }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            python pw.py notify --report "$REPORT_PATH"
+          else
+            python pw.py notify --text "단백질 가격 비교기 실행 실패 ($JOB_STATUS). 실행 기록: $RUN_URL"
+          fi

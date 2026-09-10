@@ -172,8 +172,15 @@ def run(*, force: bool = False, monday_only: bool = True, today: dt.date | None 
         out["summary_line"] = f"{_iso(day)} 조사분이 들어왔다. 리포트는 월요일에 만든다"
         _emit(out); return out
     text, summary = build(day, prev)
+    if not summary.get("n_ranked"):
+        # 매칭이 하나도 없으면 순위표가 빈 리포트가 만들어진다.
+        # 그걸 써 버리면 멀쩡하던 지난 리포트를 덮어쓴다. 쓰지 않고 세운다.
+        out["summary_line"] = f"{_iso(day)} 조사분에 순위에 올릴 상품이 없다. match 단계를 먼저 돌려야 한다. 기존 리포트는 건드리지 않는다"
+        _emit(out); return out
     REPORTS.mkdir(parents=True, exist_ok=True)
-    y, w, _ = today.isocalendar()
+    # 실행한 날이 아니라 조사한 날의 주차로 이름을 짓는다.
+    # 같은 조사분을 다시 만들어도 같은 파일에 덮어쓰도록(멱등) 하려는 것이다.
+    y, w, _ = dt.date(int(day[:4]), int(day[4:6]), int(day[6:])).isocalendar()
     path = REPORTS / f"{y}-W{w:02d}.md"
     path.write_text(text, encoding="utf8")
     LATEST.write_text(json.dumps({**summary, "path": str(path.relative_to(api.ROOT))}, ensure_ascii=False, indent=1), encoding="utf8")
