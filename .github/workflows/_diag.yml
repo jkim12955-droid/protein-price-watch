@@ -3,34 +3,27 @@ on: workflow_dispatch
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     env:
       PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
     steps:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - name: 조사일 있는 날과 없는 날을 나란히
+      - name: 러너 IP
+        run: curl -sS -m 10 https://api.ipify.org; echo
+      - name: 같은 IP 에서 curl 과 python 을 번갈아
         run: |
-          python3 - <<'PY'
-          import os, time, urllib.parse, urllib.request
-          k = urllib.parse.quote(os.environ["PRICE_API_KEY"], safe="")
-          def probe(day, timeout=30):
-              u = (f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc"
-                   f"?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay={day}&goodId=1000")
-              t = time.time()
-              try:
-                  with urllib.request.urlopen(u, timeout=timeout) as r:
-                      b = r.read()
-                  has = b"goodPriceVO" in b
-                  print(f"  {day}  성공 {time.time()-t:5.2f}s  데이터 {'있음' if has else '없음'}  {len(b)}B")
-              except Exception as e:
-                  print(f"  {day}  실패 {time.time()-t:5.2f}s  {type(e).__name__}: {e}")
-          print("조사일인 날 (데이터 있음)")
-          for d in ("20260828", "20260807"): probe(d)
-          print("조사일이 아닌 날 (데이터 없음)")
-          for d in ("20260829", "20260830", "20260901", "20260910"): probe(d)
-          print("같은 날을 세 번 반복 (일시적인지)")
-          for i in range(3): probe("20260829")
-          print("다음 조사 예정일 후보")
-          for d in ("20260911", "20260904"): probe(d)
-          PY
+          U_ENC=$(python3 -c "import urllib.parse,os;print(urllib.parse.quote(os.environ['PRICE_API_KEY'],safe=''))")
+          U="https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey=$U_ENC&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
+          for i in 1 2; do
+            curl -sS -o /dev/null -m 20 -w "curl$i  code=%{http_code} total=%{time_total}s\n" "$U" || echo "curl$i  실패"
+            python3 -c "
+import os,sys,time,urllib.request
+t=time.time()
+try:
+    with urllib.request.urlopen(sys.argv[1], timeout=20) as r: b=r.read()
+    print(f'py$i    code={r.status} total={time.time()-t:.2f}s {len(b)}B')
+except Exception as e:
+    print(f'py$i    실패 {time.time()-t:.2f}s {type(e).__name__}')
+" "$U"
+          done
