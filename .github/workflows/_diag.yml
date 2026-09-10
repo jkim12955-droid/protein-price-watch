@@ -3,41 +3,34 @@ on: workflow_dispatch
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
     steps:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - name: curl 로 실제 요청 (키 포함, 값은 출력하지 않는다)
-        run: |
-          U="https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey=$(python3 -c "import urllib.parse,os;print(urllib.parse.quote(os.environ['PRICE_API_KEY'],safe=''))")&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
-          curl -sS -o /tmp/c.xml -m 30 -w 'curl 기본UA code=%{http_code} total=%{time_total}s\n' "$U" || echo "  curl 실패"
-          head -c 200 /tmp/c.xml; echo
-      - name: python urllib, 기본 UA
+      - name: 조사일 있는 날과 없는 날을 나란히
         run: |
           python3 - <<'PY'
           import os, time, urllib.parse, urllib.request
           k = urllib.parse.quote(os.environ["PRICE_API_KEY"], safe="")
-          u = f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
-          t = time.time()
-          try:
-              with urllib.request.urlopen(u, timeout=25) as r:
-                  print(f"기본UA 성공 {r.status} {time.time()-t:.2f}s", r.read()[:120])
-          except Exception as e:
-              print(f"기본UA 실패 {time.time()-t:.2f}s :: {type(e).__name__}: {e}")
-          PY
-      - name: python urllib, 브라우저 UA
-        run: |
-          python3 - <<'PY'
-          import os, time, urllib.parse, urllib.request
-          k = urllib.parse.quote(os.environ["PRICE_API_KEY"], safe="")
-          u = f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay=20260828&goodId=1000"
-          req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (compatible; protein-price-watch/1.0)", "Accept": "*/*"})
-          t = time.time()
-          try:
-              with urllib.request.urlopen(req, timeout=25) as r:
-                  print(f"브라우저UA 성공 {r.status} {time.time()-t:.2f}s", r.read()[:120])
-          except Exception as e:
-              print(f"브라우저UA 실패 {time.time()-t:.2f}s :: {type(e).__name__}: {e}")
+          def probe(day, timeout=30):
+              u = (f"https://apis.data.go.kr/B551919/ProductPriceInfoService/getProductPriceInfoSvc"
+                   f"?serviceKey={k}&numOfRows=1&pageNo=1&goodInspectDay={day}&goodId=1000")
+              t = time.time()
+              try:
+                  with urllib.request.urlopen(u, timeout=timeout) as r:
+                      b = r.read()
+                  has = b"goodPriceVO" in b
+                  print(f"  {day}  성공 {time.time()-t:5.2f}s  데이터 {'있음' if has else '없음'}  {len(b)}B")
+              except Exception as e:
+                  print(f"  {day}  실패 {time.time()-t:5.2f}s  {type(e).__name__}: {e}")
+          print("조사일인 날 (데이터 있음)")
+          for d in ("20260828", "20260807"): probe(d)
+          print("조사일이 아닌 날 (데이터 없음)")
+          for d in ("20260829", "20260830", "20260901", "20260910"): probe(d)
+          print("같은 날을 세 번 반복 (일시적인지)")
+          for i in range(3): probe("20260829")
+          print("다음 조사 예정일 후보")
+          for d in ("20260911", "20260904"): probe(d)
           PY
