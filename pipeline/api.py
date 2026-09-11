@@ -34,7 +34,8 @@ def load_env() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip())
+        # 값을 따옴표로 감싸 붙여넣는 경우가 있다. 그대로 두면 주소나 키가 깨진다.
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 load_env()
