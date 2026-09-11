@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import os
 
 from . import api, qa
@@ -25,6 +26,14 @@ WATCH = [  # 따로 지켜보는 여덟 품목 (워크북 A-3)
 
 def _iso(d8): return f"{d8[:4]}-{d8[4:6]}-{d8[6:]}"
 def _won(v): return f"{v:,.0f}원" if v is not None else "-"
+def _josa(word: str, pair: str) -> str:
+    """받침 유무로 조사를 고른다. pair 는 '은는', '이가' 처럼 받침 있을 때 쓰는 것을 앞에 둔다."""
+    w = re.sub(r"(\([^)]*\))+$", "", word).strip()
+    ch = w[-1] if w else ""
+    has = "가" <= ch <= "힣" and (ord(ch) - 0xAC00) % 28 != 0
+    return pair[0] if has else pair[1]
+
+
 def _kdate(d8, year=True):
     d8 = d8.replace("-", "")
     y, m, d = int(d8[:4]), int(d8[4:6]), int(d8[6:])
@@ -62,124 +71,113 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     L.append(f"{_kdate(day)} 조사분" + (f"을 {_kdate(prev, year=False)} 조사와 비교했다." if prev else "이다.") +
              f" {today.month}월 {today.day}일에 만들었다.")
     L.append("")
-    L.append(f"한국소비자원 참가격이 조사한 가격에 식약처 식품영양성분을 붙여 단백질 1g을 얻는 데 드는 돈이 적은 순서로 줄을 세웠다. "
-             f"가격은 판매점 가격의 중앙값이고 단백질은 100g당 값이다. 판매점이 가장 많은 상품은 {max((r['n_stores'] for r in rows), default=0)}곳 가격을 모았다. "
-             f"식품 {len(rows)}개 중 {len(ranked)}개가 순위에 올랐다. 나머지는 영양 항목을 못 붙였거나 단백질이 100g당 {th['protein_min_per_100g']:.0f}g 미만이거나 뼈 포함 무게라 뺐다.")
-    L.append("")
 
-    # 1. 순위
-    L.append("## 1. 단백질 1g당 가격 순위")
-    L.append("")
-    L.append("| 순위 | 상품 | 분류 | 100g당 가격 | 단백질 g/100g | 단백질 1g당 | 판매점 | 할인 중 | 매칭 |")
-    L.append("|---|---|---|---|---|---|---|---|---|")
-    method_ko = {"manual": "사람", "exact": "자동·정확", "partial": "자동·부분", "fallback": "분류 기본"}
-    for i, r in enumerate(ranked[:20], 1):
-        chg = ""
-        p = prev_rows.get(r["good_id"])
-        if p and p.get("won_per_g"):
-            d = (r["won_per_g"] / p["won_per_g"] - 1) * 100
-            chg = f" ({d:+.0f}%)"
-        L.append(f"| {i} | {r['good_name']} | {r['label']} | {_won(r['price_per_100g'])} | {r['protein']:.1f} | {r['won_per_g']:,.1f}원{chg} | {r['n_stores']} | {r['dc_share']:.0%} | {method_ko.get(r['method'], r['method'])} |")
-    L.append("")
-    L.append("괄호 안은 지난 조사와 비교한 단백질 1g당 가격 변화율이다. 판매점이 적은 상품은 중앙값이 흔들릴 수 있다.")
-    cheap_out = not_ranked_but_cheap(rows, th["protein_min_per_100g"])
-    if cheap_out:
-        L.append("")
-        L.append("순위 대상이 아닌데 숫자만 보면 더 싼 것도 있다. " + ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in cheap_out) +
-                 ". 밀가루나 국수처럼 단백질이 들어는 있어도 단백질원으로 먹지 않는 것이라 뺐다. 이 기준은 config/categories.json에 있다.")
-    L.append("")
+    def _pct(c):
+        # "+0%" 가 줄마다 붙으면 어수선하다. 반올림해 0 이면 그냥 0% 로 쓴다.
+        if c is None:
+            return "-"
+        return "0%" if round(c) == 0 else f"{c:+.0f}%"
 
-    # 2. 기준선
-    L.append("## 2. 내가 늘 사는 것과 비교")
-    L.append("")
-    if base.get("price_krw") and base.get("grams"):
-        b100 = base["price_krw"] / base["grams"] * 100
-        bwon = b100 / base["protein_per_100g"]
-        cheaper = [r for r in ranked if r["won_per_g"] < bwon]
-        L.append(f"{base['name']}은 100g에 {_won(b100)}이고 단백질이 {base['protein_per_100g']}g 들어 있다. 단백질 1g당 {bwon:,.1f}원이다. "
-                 f"순위에 오른 상품 중 이보다 싼 것이 {len(cheaper)}개다.")
-        if base.get("price_checked_on"):
-            # 참가격 조사값이 아니라 사람이 넣은 값이라, 언제 확인한 가격인지 밝혀 둔다.
-            L.append("")
-            L.append(f"가격은 {_kdate(base['price_checked_on'])}에 직접 확인해 넣었다. 바뀌면 config/baseline.json을 고친다.")
-        if cheaper:
-            L.append("")
-            if len(cheaper) > 8:
-                L.append(f"싼 순서로 8개만 적는다. 나머지 {len(cheaper) - 8}개는 위 순위표에 있다.")
-                L.append("")
-            for r in cheaper[:8]:
-                L.append(f"- {r['good_name']}: {r['won_per_g']:,.1f}원, {100 - r['won_per_g']/bwon*100:.0f}% 싸다")
-    else:
-        L.append(f"{base['name']} 가격과 용량이 아직 입력되지 않았다. config/baseline.json을 채우면 여기에 비교가 나온다.")
-    L.append("")
+    def _dc(v):
+        # 할인 비율이 반올림해 0% 면 할인이 없는 것과 같게 "-" 로 쓴다.
+        return f"{v:.0%}" if v and round(v * 100) > 0 else "-"
 
-    # 3. 관심 품목
-    L.append("## 3. 따로 지켜보는 여덟 품목")
-    L.append("")
-    L.append("| 품목 | 이번 조사 최저(단백질 1g당) | 상품 | 이전 조사 | 변화 |")
-    L.append("|---|---|---|---|---|")
-    watch_summary = []
+    def _chg(r):
+        pv = prev_rows.get(r["good_id"])
+        return (r["won_per_g"] / pv["won_per_g"] - 1) * 100 if pv and pv.get("won_per_g") else None
+
+    base_won = (base["price_krw"] / base["grams"] * 100 / base["protein_per_100g"]
+                if base.get("price_krw") and base.get("grams") else None)
+    checks = (qa_res or {}).get("checks", [])
+
+    # 지켜보는 품목마다 가장 싼 상품. 요약과 표가 함께 쓴다.
+    watch, watch_summary = [], []
     for label, codes in WATCH:
         cands = [r for r in ranked if r["smlcls_code"] in codes]
-        if not cands:
-            L.append(f"| {label} | - | (순위에 오른 상품 없음) | - | - |")
-            continue
-        best = cands[0]
-        pv = prev_rows.get(best["good_id"], {}).get("won_per_g")
-        chg = f"{(best['won_per_g']/pv-1)*100:+.0f}%" if pv else "-"
-        L.append(f"| {label} | {best['won_per_g']:,.1f}원 | {best['good_name']} | {f'{pv:,.1f}원' if pv else '-'} | {chg} |")
-        watch_summary.append(f"{label} {best['won_per_g']:,.0f}원")
-    L.append("")
+        best = cands[0] if cands else None
+        watch.append((label, best))
+        if best:
+            watch_summary.append(f"{label} {best['won_per_g']:,.0f}원")
 
-    # 4. 할인
-    disc = [r for r in ranked if (r["dc_share"] or 0) >= 0.3][:8]
-    L.append("## 4. 지금 할인 중인 것")
+    # 요약. 읽는 사람이 궁금한 "이번 주에 뭘 사면 되나" 를 먼저 답한다.
+    L.append("## 이번 주 요약")
     L.append("")
-    if disc:
-        for r in disc:
-            L.append(f"- {r['good_name']}: 판매점 {r['dc_share']:.0%}에서 할인한다. 단백질 1g당 {r['won_per_g']:,.1f}원, 가장 싼 곳은 {r['min_store']}의 {_won(r['min_price'])}.")
+    if ranked:
+        top = ranked[0]
+        s = f"단백질이 가장 싼 상품은 {top['good_name']}이고 1g당 {top['won_per_g']:,.1f}원이다."
+        if (top["dc_share"] or 0) >= 0.3:
+            s += f" 판매점 {top['dc_share']:.0%}에서 할인 중이다."
+        L.append(s)
+        L.append("")
+    if base_won:
+        cheaper = [r for r in ranked if r["won_per_g"] < base_won]
+        s = f"늘 사는 {base['name']}{_josa(base['name'], '은는')} {base_won:,.1f}원이고 이보다 싼 상품이 {len(cheaper)}개다."
+        wl = [label for label, best in watch if best and best["won_per_g"] < base_won]
+        if wl:
+            s += f" 지켜보는 품목 가운데 {', '.join(wl)}{_josa(wl[-1], '이가')} 더 싸다."
+        if base.get("price_checked_on"):
+            s += f" 기준 가격은 {_kdate(base['price_checked_on'], year=False)}에 직접 확인했다."
+        L.append(s)
     else:
-        L.append("순위에 오른 상품 중 판매점 30% 이상에서 할인 중인 것은 없다.")
+        L.append(f"{base['name']} 가격이 아직 없어 비교하지 못했다. config/baseline.json을 채우면 여기에 나온다.")
+    L.append("")
+    moved = [(r, _chg(r)) for r in ranked[:20] if _chg(r) is not None and abs(_chg(r)) >= 10]
+    if moved:
+        r, c = max(moved, key=lambda x: abs(x[1]))
+        L.append(f"지난 조사와 비교하면 {r['good_name']}의 변화가 가장 크다. 단백질 1g당 가격이 {abs(c):.0f}% {'내렸다' if c < 0 else '올랐다'}.")
+        L.append("")
+    if checks:
+        flagged = [c for c in checks if c["status"] != "ok"]
+        qa_link = f"docs/qa/{_iso(day)}_qa.md"
+        if flagged:
+            names = ", ".join(c["name"] for c in flagged)
+            L.append(f"자동 점검 {len(checks)}가지 중 {len(checks) - len(flagged)}가지는 정상이고 {names}{_josa(flagged[-1]['name'], '은는')} 확인이 필요하다. 전체 점검표는 {qa_link}에 있다.")
+        else:
+            L.append(f"자동 점검 {len(checks)}가지를 모두 통과했다. 전체 점검표는 {qa_link}에 있다.")
+        L.append("")
+
+    # 순위: 판단에 필요한 칸만 남긴다
+    L.append("## 순위")
+    L.append("")
+    L.append(f"식품 {len(rows)}개 중 순위에 오른 {len(ranked)}개에서 위의 10개다.")
+    L.append("")
+    L.append("| 순위 | 상품 | 단백질 1g당 | 지난 조사 대비 | 할인하는 판매점 |")
+    L.append("|---|---|---|---|---|")
+    for i, r in enumerate(ranked[:10], 1):
+        c = _chg(r)
+        dc = r["dc_share"] or 0
+        L.append(f"| {i} | {r['good_name']} | {r['won_per_g']:,.1f}원 | {_pct(c)} | {_dc(dc)} |")
     L.append("")
 
-    # 5. 점검
-    L.append("## 5. 자동 점검 결과")
+    L.append("## 지켜보는 품목")
     L.append("")
-    L.append(qa.as_markdown(qa_res) if qa_res else "점검 결과 파일이 없다 (python pw.py qa).")
+    L.append("| 품목 | 가장 싼 상품 | 단백질 1g당 | 지난 조사 대비 |")
+    L.append("|---|---|---|---|")
+    for label, best in watch:
+        if not best:
+            L.append(f"| {label} | 순위에 오른 상품 없음 | - | - |")
+            continue
+        c = _chg(best)
+        L.append(f"| {label} | {best['good_name']} | {best['won_per_g']:,.1f}원 | {_pct(c)} |")
     L.append("")
 
-    # 6. 한계
+    # 참고: 매주 같은 가정과 긴 목록은 파일로 빼고 링크만 건다
     from .metrics import protein_categories
     pcats = protein_categories()
-    unmatched = [r for r in rows if r["method"] == "unmatched"]
-    unmatched_p = [r for r in unmatched if r["smlcls_code"] in pcats]
-    excluded = [r for r in rows if r["method"].startswith("excluded")]
-    approx = [r for r in rows if r["method"] == "manual" and r.get("match_note") and "근사" in r["match_note"]]
-    L.append("## 6. 못 하는 것과 조심할 것")
+    unmatched_p = [r for r in rows if r["method"] == "unmatched" and r["smlcls_code"] in pcats]
+    L.append("## 참고")
     L.append("")
-    L.append(f"순위 대상인데 영양 항목을 못 붙인 상품이 {len(unmatched_p)}개다" + (": " + ", ".join(r["good_name"] for r in unmatched_p[:8]) + ("." if len(unmatched_p) <= 8 else " 등.") if unmatched_p else ".") +
-             f" 상품명이 브랜드식이라 식약처 DB 이름과 짝이 안 맞아 순위에서 빠졌다. 순위 대상이 아닌 분류까지 치면 {len(unmatched)}개인데 대부분 과자, 음료, 조미료라 리포트에는 영향이 없다.")
+    L.append(f"가격은 판매점 가격의 중앙값이고 단백질은 식약처 영양성분의 100g당 값이다. "
+             f"영양 정보를 못 붙였거나 단백질이 100g당 {th['protein_min_per_100g']:.0f}g 미만이거나 뼈 무게가 섞인 식품은 순위에서 뺐다.")
     L.append("")
-    L.append(f"일부러 뺀 상품은 {len(excluded)}개다. 조미료, 과자, 음료처럼 단백질로 먹지 않는 분류와 뼈까지 무게에 들어간 통닭, 영양 DB에 원재료가 없는 오징어, 연어, 조기가 여기 든다.")
+    if unmatched_p:
+        few = ", ".join(re.sub(r"(\([^)]*\))+$", "", r["good_name"]).strip() for r in unmatched_p[:3])
+        L.append(f"순위 대상인데 영양 정보를 못 붙여 빠진 상품이 {len(unmatched_p)}개다({few}{' 등' if len(unmatched_p) > 3 else ''}). "
+                 "자동으로 이은 상품은 틀릴 수 있다. 빠진 상품 전체와 사람이 정한 가정은 docs/match_report.md와 README에 있다.")
+    else:
+        L.append("자동으로 이은 상품은 틀릴 수 있다. 사람이 정한 가정은 docs/match_report.md와 README에 있다.")
     L.append("")
-    if approx:
-        # 메모가 "같은 근사" 로 끝나는 상품은 이름 첫 단어가 같은 상품의 근사 대상을 가져다 쓴다.
-        def _src(r): return r["match_note"].split(".")[0].split("→")[-1].strip()
-        def _head(r): return r["good_name"].split("(")[0].split()[0]
-        known = {_head(r): _src(r) for r in approx if not _src(r).startswith("같은")}
-        L.append(f"근사값을 쓴 상품이 {len(approx)}개다. 영양 DB에 딱 맞는 항목이 없어 가장 가까운 항목을 골랐다.")
-        L.append("")
-        for r in approx[:6]:
-            s = _src(r)
-            L.append(f"- {r['good_name']}: {known.get(_head(r), s) if s.startswith('같은') else s}")
-        L.append("")
-    L.append("계란은 설명이 빈 상품에 개당 52g을 썼다. 쇠고기 불고기는 부위가 특정되지 않아 앞다리 값을 썼다.")
-    L.append("")
-    L.append("자동·부분 매칭은 단어가 75% 이상 겹치고 분류가 맞는 항목을 고른 결과라 틀릴 수 있다. 의심스러우면 docs/match_report.md의 검토용 표를 본다.")
-    L.append("")
-    L.append(f"{base['name']}은 참가격에 없어 가격을 내가 직접 넣는다. 가공식품의 영양은 제조사 표시값이고 원재료는 식품성분표 값이라 기준이 조금 다르다.")
-    L.append("")
-    L.append("출처: 한국소비자원 참가격(공공데이터포털 15158701, 공공저작물 제1유형), 식품의약품안전처 식품영양성분DB(15127578). 코드와 원본은 저장소에 있다.")
+    L.append("출처: 한국소비자원 참가격(공공데이터포털 15158701, 공공저작물 제1유형), 식품의약품안전처 식품영양성분DB(15127578).")
 
     top3 = ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in ranked[:3])
     summary = {"survey_day": day, "top3": top3, "n_ranked": len(ranked), "n_food": len(rows), "watch": watch_summary,
