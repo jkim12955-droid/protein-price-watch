@@ -93,8 +93,11 @@ jobs:
             git push || (git pull --rebase && git push)
           fi
 
-      - name: 슬랙 알림 (성공이든 실패든 보낸다)
-        if: always() && (github.event.schedule == '0 0 * * 1' || github.event_name == 'workflow_dispatch' || failure())
+      # 월요일 09:00 실행에서만 보내게 하면, GitHub 이 그 예약을 건너뛰었을 때
+      # 뒤이은 09:30 실행이 리포트를 만들고도 슬랙은 보내지 않는다. 예약 실행은 늦거나 빠질 수 있다.
+      # 그래서 실행 시각이 아니라 "새 리포트가 나왔는가" 로 정한다. 같은 조사분 리포트는 한 번만 만들어지므로 중복도 없다.
+      - name: 슬랙 알림 (새 리포트가 나왔거나 실패했을 때)
+        if: always() && (steps.report.outputs.report_path != '' || failure())
         env:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
