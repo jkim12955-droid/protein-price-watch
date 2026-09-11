@@ -40,6 +40,7 @@ jobs:
       # 설치 단계가 없다. 표준 라이브러리만 쓴다.
 
       - name: 수집 (새 조사일이 있을 때만 받는다)
+        id: collect
         env:
           # 입력값을 run 안에 직접 넣으면 임의 명령이 실행될 수 있다.
           # 환경변수로 건네 셸이 해석하지 못하게 한다.
@@ -69,8 +70,16 @@ jobs:
             python pw.py report
           fi
 
-      - name: 결과 커밋 (점검이 실패해도 증거는 남긴다)
-        if: always()
+      # 매 실행마다 커밋하면 실행 시각 한 줄만 바뀐 커밋이 하루 세 개씩 쌓인다.
+      # 격주로 오는 진짜 기록이 그 잡음에 묻히므로, 의미 있는 일이 있었을 때만 남긴다.
+      # 새 조사분을 받았을 때, 리포트를 만들었을 때, 무엇이든 실패했을 때.
+      - name: 결과 커밋 (새 조사분, 리포트, 실패가 있을 때만)
+        if: >-
+          always() && (
+            steps.collect.outputs.collected != '0' ||
+            steps.report.outputs.report_path != '' ||
+            failure()
+          )
         run: |
           git config user.name  "pricewatch-bot"
           git config user.email "pricewatch-bot@users.noreply.github.com"

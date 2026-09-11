@@ -13,6 +13,7 @@
 """
 import argparse
 import json
+import os
 import sys
 
 from pipeline import api, collect, load, match, qa, report, notify
@@ -31,13 +32,20 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.cmd == "collect":
+        new = 0
         try:
-            collect.run(dates=a.date or None, force=a.force)
+            results = collect.run(dates=a.date or None, force=a.force)
+            new = sum(1 for r in results if not r.get("skipped"))
         except api.Unreachable as e:
             # 수집 도중에 끊긴 경우다. 이미 받아둔 조사분으로 리포트는 만들 수 있으므로
             # 여기서 파이프라인을 세우지 않는다. 받다 만 조사일은 다음 실행이 다시 받는다.
             print(f"수집 중단: {e}", file=sys.stderr)
             print("이미 받아둔 조사분으로 이어서 진행한다.")
+        # 워크플로가 커밋할지 정하는 데 쓴다. 새로 받은 게 없으면 커밋하지 않는다.
+        gh = os.environ.get("GITHUB_OUTPUT")
+        if gh:
+            with open(gh, "a", encoding="utf8") as fh:
+                fh.write(f"collected={new}\n")
     elif a.cmd == "load":
         load.run(dates=a.date or None)
     elif a.cmd == "match":
