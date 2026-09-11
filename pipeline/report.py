@@ -132,22 +132,50 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         if flagged:
             names = ", ".join(c["name"] for c in flagged)
             L.append(f"자동 점검 {len(checks)}가지 중 {len(checks) - len(flagged)}가지는 정상이고 {names}{_josa(flagged[-1]['name'], '은는')} 확인이 필요하다. 전체 점검표는 {qa_link}에 있다.")
+            L.append("")
+            for c in flagged:
+                L.append(f"- {c['name']}: {c['message']}")
         else:
             L.append(f"자동 점검 {len(checks)}가지를 모두 통과했다. 전체 점검표는 {qa_link}에 있다.")
         L.append("")
 
     # 순위: 판단에 필요한 칸만 남긴다
+    # 늘 사는 것보다 싼 상품은 다 보이게 하고 그 아래 세 개까지 보여준다. 최소 10줄, 최대 20줄.
+    n_cheaper = len([r for r in ranked if base_won and r["won_per_g"] < base_won])
+    n_show = min(20, max(10, n_cheaper + 3))
+
+    def _base_row():
+        return (f"| 기준 | {base['name']} (늘 사는 것) | {_won(base['price_krw'] / base['grams'] * 100)} | "
+                f"{base['protein_per_100g']:.1f}g | {base_won:,.1f}원 | - | - | - |")
+
     L.append("## 순위")
     L.append("")
-    L.append(f"식품 {len(rows)}개 중 순위에 오른 {len(ranked)}개에서 위의 10개다.")
+    L.append(f"식품 {len(rows)}개 중 순위에 오른 {len(ranked)}개에서 위의 {n_show}개다."
+             + (" 늘 사는 상품이 들어갈 자리에 기준 줄을 넣었다." if base_won else "")
+             + " 판매점이 적은 상품은 중앙값이 흔들릴 수 있어 판매점 수를 함께 적는다.")
     L.append("")
-    L.append("| 순위 | 상품 | 단백질 1g당 | 지난 조사 대비 | 할인하는 판매점 |")
-    L.append("|---|---|---|---|---|")
-    for i, r in enumerate(ranked[:10], 1):
-        c = _chg(r)
-        dc = r["dc_share"] or 0
-        L.append(f"| {i} | {r['good_name']} | {r['won_per_g']:,.1f}원 | {_pct(c)} | {_dc(dc)} |")
+    L.append("| 순위 | 상품 | 100g당 가격 | 단백질(100g당) | 단백질 1g당 | 지난 조사 대비 | 할인하는 판매점 | 판매점 수 |")
+    L.append("|---|---|---|---|---|---|---|---|")
+    placed = False
+    for i, r in enumerate(ranked[:n_show], 1):
+        if base_won and not placed and r["won_per_g"] >= base_won:
+            L.append(_base_row())
+            placed = True
+        L.append(f"| {i} | {r['good_name']} | {_won(r['price_per_100g'])} | {r['protein']:.1f}g | {r['won_per_g']:,.1f}원 | "
+                 f"{_pct(_chg(r))} | {_dc(r['dc_share'] or 0)} | {r['n_stores']}곳 |")
+    if base_won and not placed:
+        L.append(_base_row())
     L.append("")
+
+    disc = [r for r in ranked if (r["dc_share"] or 0) >= 0.3][:5]
+    if disc:
+        L.append("## 지금 할인 중인 것")
+        L.append("")
+        L.append("판매점 30% 이상이 할인하는 상품이다.")
+        L.append("")
+        for r in disc:
+            L.append(f"- {r['good_name']}: 판매점 {r['dc_share']:.0%}가 할인 중이고 가장 싼 곳은 {r['min_store']}의 {_won(r['min_price'])}이다.")
+        L.append("")
 
     L.append("## 지켜보는 품목")
     L.append("")
@@ -161,7 +189,7 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         L.append(f"| {label} | {best['good_name']} | {best['won_per_g']:,.1f}원 | {_pct(c)} |")
     L.append("")
 
-    # 참고: 매주 같은 가정과 긴 목록은 파일로 빼고 링크만 건다
+    # 참고: 계산 방식, 뺀 것, 가정. 전체 목록은 파일로 두고 링크를 건다.
     from .metrics import protein_categories
     pcats = protein_categories()
     unmatched_p = [r for r in rows if r["method"] == "unmatched" and r["smlcls_code"] in pcats]
@@ -170,12 +198,31 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     L.append(f"가격은 판매점 가격의 중앙값이고 단백질은 식약처 영양성분의 100g당 값이다. "
              f"영양 정보를 못 붙였거나 단백질이 100g당 {th['protein_min_per_100g']:.0f}g 미만이거나 뼈 무게가 섞인 식품은 순위에서 뺐다.")
     L.append("")
+    cheap_out = not_ranked_but_cheap(rows, th["protein_min_per_100g"])
+    if cheap_out:
+        ex = ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in cheap_out[:2])
+        L.append(f"밀가루, 국수, 과자처럼 단백질이 들어는 있어도 단백질원으로 먹지 않는 분류도 뺐다. "
+                 f"숫자로만 보면 {ex}이다. 이 기준은 config/categories.json에 있다.")
+        L.append("")
+    approx = [r for r in rows if r["method"] == "manual" and r.get("match_note") and "근사" in r["match_note"]]
+    anames = []
+    for r in approx:
+        n = re.sub(r"(\([^)]*\))+$", "", r["good_name"]).strip()
+        if n not in anames:
+            anames.append(n)
+    s_ = "계란은 설명이 빈 상품에 개당 52g을 썼다."
+    if anames:
+        s_ += f" {', '.join(anames)}{_josa(anames[-1], '은는')} 영양 DB에 딱 맞는 항목이 없어 가장 가까운 항목으로 계산했다."
+    if "쇠고기 불고기" in anames:
+        s_ += " 쇠고기 불고기는 부위가 특정되지 않아 한우 앞다리 값을 썼다."
+    L.append(s_)
+    L.append("")
     if unmatched_p:
-        few = ", ".join(re.sub(r"(\([^)]*\))+$", "", r["good_name"]).strip() for r in unmatched_p[:3])
-        L.append(f"순위 대상인데 영양 정보를 못 붙여 빠진 상품이 {len(unmatched_p)}개다({few}{' 등' if len(unmatched_p) > 3 else ''}). "
-                 "자동으로 이은 상품은 틀릴 수 있다. 빠진 상품 전체와 사람이 정한 가정은 docs/match_report.md와 README에 있다.")
+        few = ", ".join(re.sub(r"(\([^)]*\))+$", "", r["good_name"]).strip() for r in unmatched_p[:8])
+        L.append(f"순위 대상인데 영양 정보를 못 붙여 빠진 상품이 {len(unmatched_p)}개다({few}{' 등' if len(unmatched_p) > 8 else ''}). "
+                 "상품명이 브랜드식이라 식약처 DB 이름과 짝이 안 맞은 것들이다. 자동으로 이은 상품도 틀릴 수 있으니 의심스러우면 docs/match_report.md를 본다.")
     else:
-        L.append("자동으로 이은 상품은 틀릴 수 있다. 사람이 정한 가정은 docs/match_report.md와 README에 있다.")
+        L.append("자동으로 이은 상품은 틀릴 수 있으니 의심스러우면 docs/match_report.md를 본다.")
     L.append("")
     L.append("출처: 한국소비자원 참가격(공공데이터포털 15158701, 공공저작물 제1유형), 식품의약품안전처 식품영양성분DB(15127578).")
 

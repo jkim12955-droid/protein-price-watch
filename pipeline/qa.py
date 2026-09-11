@@ -134,6 +134,21 @@ def _group(con, day):
     return g
 
 
+def _batchim(word: str) -> bool:
+    import re as _re
+    w = _re.sub(r"(\([^)]*\))+$", "", word).strip()
+    ch = w[-1] if w else ""
+    return "가" <= ch <= "힣" and (ord(ch) - 0xAC00) % 28 != 0
+
+
+def _i(word: str) -> str:
+    return "이" if _batchim(word) else "가"
+
+
+def _eun(word: str) -> str:
+    return "은" if _batchim(word) else "는"
+
+
 def check_units(con, th):
     t = th["egg_grams_per_unit"]
     bad = []
@@ -146,13 +161,17 @@ def check_units(con, th):
         elif g["smlcls_code"] == "030101001" and g["total_cnt"]:
             per = grams / float(g["total_cnt"])
             if per < t["min"] or per > t["max"]:
-                bad.append(f"{g['good_name']} 개당 {per:.0f}g")
+                bad.append((g["good_name"], per))
     status = "warn" if (bad or nograms) else "ok"
     msg = []
-    if bad: msg.append("계란 개당 무게 이상: " + "; ".join(bad))
-    if nograms: msg.append(f"무게로 못 바꾼 상품 {len(nograms)}개(" + ", ".join(nograms[:5]) + ")")
+    if bad:
+        parts = ", ".join(f"{n}{_i(n)} {per:.0f}g" for n, per in bad)
+        msg.append(f"계란 한 알 무게는 {t['min']}~{t['max']}g이 정상인데 {parts}으로 계산됐다.")
+    if nograms:
+        last = "등" if len(nograms) > 5 else nograms[:5][-1]
+        msg.append(", ".join(nograms[:5]) + (" 등" if len(nograms) > 5 else "") + f"{_eun(last)} 무게로 바꾸지 못했다.")
     return {"name": "단위 상식 검사", "status": status, "value": len(bad) + len(nograms), "threshold": f"계란 한 알 {t['min']}~{t['max']}g, 환산 실패 0개",
-            "message": ". ".join(msg) if msg else "모든 식품의 무게를 바꿨고 계란 한 알 무게도 범위 안이다"}
+            "message": " ".join(msg) if msg else "모든 식품의 무게를 바꿨고 계란 한 알 무게도 범위 안이다"}
 
 
 def check_baseline():
