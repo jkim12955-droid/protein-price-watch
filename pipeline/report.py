@@ -25,6 +25,10 @@ WATCH = [  # 따로 지켜보는 여덟 품목 (워크북 A-3)
 
 def _iso(d8): return f"{d8[:4]}-{d8[4:6]}-{d8[6:]}"
 def _won(v): return f"{v:,.0f}원" if v is not None else "-"
+def _kdate(d8, year=True):
+    d8 = d8.replace("-", "")
+    y, m, d = int(d8[:4]), int(d8[4:6]), int(d8[6:])
+    return f"{y}년 {m}월 {d}일" if year else f"{m}월 {d}일"
 
 
 def _reported_days() -> set[str]:
@@ -50,11 +54,16 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     qa_res = json.loads(qa.OUT_JSON.read_text(encoding="utf8")) if qa.OUT_JSON.exists() else None
 
     L = []
-    L.append(f"# 단백질 가격 비교 리포트")
-    L.append(f"조사일:{_iso(day)} 작성:{dt.date.today().isoformat()}" + (f" 비교:{_iso(prev)}" if prev else ""))
+    L.append("# 단백질 가격 비교 리포트")
+    # 이 주석 줄은 GitHub 화면에 보이지 않는다. 같은 조사분 리포트를 두 번 만들지 않으려고 _reported_days 가 읽는다.
+    L.append(f"<!-- 조사일:{_iso(day)} -->")
     L.append("")
-    L.append(f"한국소비자원 참가격 {_iso(day)} 조사분에 식약처 식품영양성분을 붙여, 단백질 1g을 얻는 데 드는 돈이 적은 순서로 줄을 세웠다. "
-             f"가격은 판매점 {max((r['n_stores'] for r in rows), default=0)}곳까지의 중앙값이고, 단백질은 100g당 값이다. "
+    today = dt.date.today()
+    L.append(f"{_kdate(day)} 조사분" + (f"을 {_kdate(prev, year=False)} 조사와 비교했다." if prev else "이다.") +
+             f" {today.month}월 {today.day}일에 만들었다.")
+    L.append("")
+    L.append(f"한국소비자원 참가격이 조사한 가격에 식약처 식품영양성분을 붙여 단백질 1g을 얻는 데 드는 돈이 적은 순서로 줄을 세웠다. "
+             f"가격은 판매점 가격의 중앙값이고 단백질은 100g당 값이다. 판매점이 가장 많은 상품은 {max((r['n_stores'] for r in rows), default=0)}곳 가격을 모았다. "
              f"식품 {len(rows)}개 중 {len(ranked)}개가 순위에 올랐다. 나머지는 영양 항목을 못 붙였거나 단백질이 100g당 {th['protein_min_per_100g']:.0f}g 미만이거나 뼈 포함 무게라 뺐다.")
     L.append("")
 
@@ -70,14 +79,14 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         if p and p.get("won_per_g"):
             d = (r["won_per_g"] / p["won_per_g"] - 1) * 100
             chg = f" ({d:+.0f}%)"
-        L.append(f"| {i} | {r['good_name']} | {r['label']} | {_won(r['price_per_100g'])} | {r['protein']:.1f} | **{r['won_per_g']:,.1f}원**{chg} | {r['n_stores']} | {r['dc_share']:.0%} | {method_ko.get(r['method'], r['method'])} |")
+        L.append(f"| {i} | {r['good_name']} | {r['label']} | {_won(r['price_per_100g'])} | {r['protein']:.1f} | {r['won_per_g']:,.1f}원{chg} | {r['n_stores']} | {r['dc_share']:.0%} | {method_ko.get(r['method'], r['method'])} |")
     L.append("")
-    L.append("괄호 안은 이전 조사 대비 단백질 1g당 가격 변화다. 판매점 수가 적은 상품은 중앙값이 흔들릴 수 있다.")
+    L.append("괄호 안은 지난 조사와 비교한 단백질 1g당 가격 변화율이다. 판매점이 적은 상품은 중앙값이 흔들릴 수 있다.")
     cheap_out = not_ranked_but_cheap(rows, th["protein_min_per_100g"])
     if cheap_out:
         L.append("")
         L.append("순위 대상이 아닌데 숫자만 보면 더 싼 것도 있다. " + ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in cheap_out) +
-                 ". 밀가루나 국수처럼 단백질이 들어는 있지만 단백질원으로 먹지 않는 것들이라 뺐다. 이 기준은 config/categories.json 에 있다.")
+                 ". 밀가루나 국수처럼 단백질이 들어는 있어도 단백질원으로 먹지 않는 것이라 뺐다. 이 기준은 config/categories.json에 있다.")
     L.append("")
 
     # 2. 기준선
@@ -87,18 +96,21 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         b100 = base["price_krw"] / base["grams"] * 100
         bwon = b100 / base["protein_per_100g"]
         cheaper = [r for r in ranked if r["won_per_g"] < bwon]
-        L.append(f"{base['name']}은 100g에 {_won(b100)}, 100g에 단백질 {base['protein_per_100g']}g 이 들어 있어 단백질 1g당 {bwon:,.1f}원이다. "
+        L.append(f"{base['name']}은 100g에 {_won(b100)}이고 단백질이 {base['protein_per_100g']}g 들어 있다. 단백질 1g당 {bwon:,.1f}원이다. "
                  f"순위에 오른 상품 중 이보다 싼 것이 {len(cheaper)}개다.")
         if base.get("price_checked_on"):
             # 참가격 조사값이 아니라 사람이 넣은 값이라, 언제 확인한 가격인지 밝혀 둔다.
             L.append("")
-            L.append(f"이 가격은 {base['price_checked_on']} 에 직접 확인해 넣은 값이다. 가격이 바뀌면 config/baseline.json 을 고친다.")
+            L.append(f"가격은 {_kdate(base['price_checked_on'])}에 직접 확인해 넣었다. 바뀌면 config/baseline.json을 고친다.")
         if cheaper:
             L.append("")
+            if len(cheaper) > 8:
+                L.append(f"싼 순서로 8개만 적는다. 나머지 {len(cheaper) - 8}개는 위 순위표에 있다.")
+                L.append("")
             for r in cheaper[:8]:
-                L.append(f"- {r['good_name']}: {r['won_per_g']:,.1f}원 ({100 - r['won_per_g']/bwon*100:.0f}% 저렴)")
+                L.append(f"- {r['good_name']}: {r['won_per_g']:,.1f}원, {100 - r['won_per_g']/bwon*100:.0f}% 싸다")
     else:
-        L.append(f"{base['name']} 가격과 용량이 아직 입력되지 않았다. config/baseline.json 을 채우면 이 절에 비교가 나온다.")
+        L.append(f"{base['name']} 가격과 용량이 아직 입력되지 않았다. config/baseline.json을 채우면 여기에 비교가 나온다.")
     L.append("")
 
     # 3. 관심 품목
@@ -125,7 +137,7 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     L.append("")
     if disc:
         for r in disc:
-            L.append(f"- {r['good_name']}: 판매점 {r['dc_share']:.0%}에서 할인, 단백질 1g당 {r['won_per_g']:,.1f}원 (최저 {_won(r['min_price'])} {r['min_store']})")
+            L.append(f"- {r['good_name']}: 판매점 {r['dc_share']:.0%}에서 할인한다. 단백질 1g당 {r['won_per_g']:,.1f}원, 가장 싼 곳은 {r['min_store']}의 {_won(r['min_price'])}.")
     else:
         L.append("순위에 오른 상품 중 판매점 30% 이상에서 할인 중인 것은 없다.")
     L.append("")
@@ -145,19 +157,38 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
     approx = [r for r in rows if r["method"] == "manual" and r.get("match_note") and "근사" in r["match_note"]]
     L.append("## 6. 못 하는 것과 조심할 것")
     L.append("")
-    L.append(f"순위 대상 상품 중 영양 항목을 못 붙인 것이 {len(unmatched_p)}개다" + (": " + ", ".join(r["good_name"] for r in unmatched_p[:8]) + ("." if len(unmatched_p) <= 8 else " 등.") if unmatched_p else ".") +
-             f" 상품명이 브랜드식이라 식약처 DB 이름과 안 맞는 것들이라 순위에 없다. 순위 대상이 아닌 분류까지 치면 {len(unmatched)}개인데 대부분 과자와 음료와 조미료라 리포트에는 영향이 없다.")
-    L.append(f"일부러 뺀 상품이 {len(excluded)}개다. 조미료와 과자와 음료처럼 단백질로 먹지 않는 분류, 뼈 포함 무게인 통닭, 영양 DB 에 원재료가 없는 오징어와 연어와 조기가 여기 든다.")
+    L.append(f"순위 대상인데 영양 항목을 못 붙인 상품이 {len(unmatched_p)}개다" + (": " + ", ".join(r["good_name"] for r in unmatched_p[:8]) + ("." if len(unmatched_p) <= 8 else " 등.") if unmatched_p else ".") +
+             f" 상품명이 브랜드식이라 식약처 DB 이름과 짝이 안 맞아 순위에서 빠졌다. 순위 대상이 아닌 분류까지 치면 {len(unmatched)}개인데 대부분 과자, 음료, 조미료라 리포트에는 영향이 없다.")
+    L.append("")
+    L.append(f"일부러 뺀 상품은 {len(excluded)}개다. 조미료, 과자, 음료처럼 단백질로 먹지 않는 분류와 뼈까지 무게에 들어간 통닭, 영양 DB에 원재료가 없는 오징어, 연어, 조기가 여기 든다.")
+    L.append("")
     if approx:
-        L.append("근사값으로 이은 상품: " + ", ".join(f"{r['good_name']}({r['match_note'].split('.')[0].split('→')[-1].strip()})" for r in approx[:6]) + ".")
-    L.append("계란은 설명이 빈 상품에 개당 52g 을 썼다. 쇠고기 불고기는 부위가 특정되지 않아 앞다리 값을 썼다. 자동·부분 매칭은 단어가 75% 이상 겹치고 분류가 맞는 항목을 고른 것이라 틀릴 수 있다. 의심스러우면 docs/match_report.md 의 검토용 표를 본다.")
-    L.append(f"하림 훈제 닭가슴살은 참가격에 없어 가격을 내가 직접 넣는다. 가공식품의 영양은 제조사 표시값이고 원재료는 식품성분표 값이라 기준이 조금 다르다.")
+        # 메모가 "같은 근사" 로 끝나는 상품은 이름 첫 단어가 같은 상품의 근사 대상을 가져다 쓴다.
+        def _src(r): return r["match_note"].split(".")[0].split("→")[-1].strip()
+        def _head(r): return r["good_name"].split("(")[0].split()[0]
+        known = {_head(r): _src(r) for r in approx if not _src(r).startswith("같은")}
+        L.append(f"근사값을 쓴 상품이 {len(approx)}개다. 영양 DB에 딱 맞는 항목이 없어 가장 가까운 항목을 골랐다.")
+        L.append("")
+        for r in approx[:6]:
+            s = _src(r)
+            L.append(f"- {r['good_name']}: {known.get(_head(r), s) if s.startswith('같은') else s}")
+        L.append("")
+    L.append("계란은 설명이 빈 상품에 개당 52g을 썼다. 쇠고기 불고기는 부위가 특정되지 않아 앞다리 값을 썼다.")
+    L.append("")
+    L.append("자동·부분 매칭은 단어가 75% 이상 겹치고 분류가 맞는 항목을 고른 결과라 틀릴 수 있다. 의심스러우면 docs/match_report.md의 검토용 표를 본다.")
+    L.append("")
+    L.append(f"{base['name']}은 참가격에 없어 가격을 내가 직접 넣는다. 가공식품의 영양은 제조사 표시값이고 원재료는 식품성분표 값이라 기준이 조금 다르다.")
     L.append("")
     L.append("출처: 한국소비자원 참가격(공공데이터포털 15158701, 공공저작물 제1유형), 식품의약품안전처 식품영양성분DB(15127578). 코드와 원본은 저장소에 있다.")
 
     top3 = ", ".join(f"{r['good_name']} {r['won_per_g']:,.0f}원" for r in ranked[:3])
     summary = {"survey_day": day, "top3": top3, "n_ranked": len(ranked), "n_food": len(rows), "watch": watch_summary,
-               "overall_qa": (qa_res or {}).get("overall")}
+               "overall_qa": (qa_res or {}).get("overall"),
+               "baseline_name": base["name"],
+               "baseline_won": (round(base["price_krw"] / base["grams"] * 100 / base["protein_per_100g"], 1)
+                                if base.get("price_krw") and base.get("grams") else None),
+               "qa_warn": [c["name"] for c in (qa_res or {}).get("checks", []) if c["status"] == "warn"],
+               "qa_fail": [c["name"] for c in (qa_res or {}).get("checks", []) if c["status"] == "fail"]}
     return "\n".join(L), summary
 
 

@@ -17,8 +17,19 @@ def run(report_path: str | None = None, text: str | None = None) -> bool:
             s = json.loads(latest.read_text(encoding="utf8"))
             repo = os.environ.get("GITHUB_REPOSITORY")
             link = f"https://github.com/{repo}/blob/main/{report_path}" if repo else report_path
-            text = (f"단백질 가격 비교 {s['survey_day'][:4]}-{s['survey_day'][4:6]}-{s['survey_day'][6:]} 조사분\n"
-                    f"1위 {s['top3']}\n관심 품목: {' / '.join(s['watch'][:4])}\n점검 {s.get('overall_qa')}\n{link}")
+            d = s["survey_day"]
+            # "정상" 은 받침이 있어 "이다", "주의"·"실패" 는 받침이 없어 "다" 가 붙는다.
+            verdict = {"ok": "정상이다", "warn": "주의다", "fail": "실패다"}.get(s.get("overall_qa"), "아직 없다")
+            lines = [f"{int(d[4:6])}월 {int(d[6:])}일 조사분 단백질 가격 리포트가 나왔다.",
+                     f"단백질 1g이 가장 싼 셋은 {s['top3']}이다."]
+            if s.get("baseline_won"):
+                lines.append(f"늘 사는 {s['baseline_name']}은 {s['baseline_won']:,.1f}원이다.")
+            if s.get("watch"):
+                lines.append("관심 품목은 " + ", ".join(s["watch"][:4]) + "이다.")
+            flagged = (s.get("qa_fail") or []) + (s.get("qa_warn") or [])
+            lines.append(f"자동 점검 결과는 {verdict}." + (f" {', '.join(flagged)} 항목을 확인해야 한다." if flagged else ""))
+            lines.append(link)
+            text = "\n".join(lines)
         else:
             text = "이번 주는 새 조사분이 없어 리포트를 만들지 않았다."
     if not url:

@@ -14,5 +14,11 @@
   "돼지고기(삼겹살·목살) 226원"
  ],
  "overall_qa": "warn",
+ "baseline_name": "하림 훈제 닭가슴살",
+ "baseline_won": 100.3,
+ "qa_warn": [
+  "단위 상식 검사"
+ ],
+ "qa_fail": [],
  "path": "reports/2026-W35.md"
 }
