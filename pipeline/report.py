@@ -87,8 +87,12 @@ def build(day: str, prev: str | None) -> tuple[str, dict]:
         b100 = base["price_krw"] / base["grams"] * 100
         bwon = b100 / base["protein_per_100g"]
         cheaper = [r for r in ranked if r["won_per_g"] < bwon]
-        L.append(f"{base['name']}은 100g에 {_won(b100)}, 단백질 100g당 {base['protein_per_100g']}g 이라 단백질 1g당 {bwon:,.1f}원이다. "
-                 f"이보다 싼 상품이 {len(cheaper)}개다.")
+        L.append(f"{base['name']}은 100g에 {_won(b100)}, 100g에 단백질 {base['protein_per_100g']}g 이 들어 있어 단백질 1g당 {bwon:,.1f}원이다. "
+                 f"순위에 오른 상품 중 이보다 싼 것이 {len(cheaper)}개다.")
+        if base.get("price_checked_on"):
+            # 참가격 조사값이 아니라 사람이 넣은 값이라, 언제 확인한 가격인지 밝혀 둔다.
+            L.append("")
+            L.append(f"이 가격은 {base['price_checked_on']} 에 직접 확인해 넣은 값이다. 가격이 바뀌면 config/baseline.json 을 고친다.")
         if cheaper:
             L.append("")
             for r in cheaper[:8]:

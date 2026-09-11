@@ -1,5 +1,5 @@
 {
- "run_at": "2026-09-10T23:25:02",
+ "run_at": "2026-09-11T12:26:37",
  "survey_day": "20260828",
  "previous_day": "20260807",
  "overall": "warn",
@@ -7,9 +7,9 @@
   {
    "name": "조사 공백",
    "status": "ok",
-   "value": 13,
+   "value": 14,
    "threshold": "warn>16 fail>24",
-   "message": "마지막 조사 2026-08-28, 13일 경과. 격주 조사라 14일까지는 정상 휴장"
+   "message": "마지막 조사 2026-08-28, 14일 경과. 격주 조사라 14일까지는 정상 휴장"
   },
   {
    "name": "수집 건수",
@@ -62,10 +62,10 @@
   },
   {
    "name": "기준선 입력",
-   "status": "warn",
-   "value": "미입력",
+   "status": "ok",
+   "value": "18450원/800g",
    "threshold": "가격과 용량 둘 다",
-   "message": "하림 훈제 닭가슴살: config/baseline.json 에 가격과 용량을 넣어야 기준선 비교가 나온다"
+   "message": "하림 훈제 닭가슴살"
   },
   {
    "name": "API 호출",
