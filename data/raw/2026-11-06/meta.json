@@ -1,0 +1,10 @@
+{
+ "inspect_day": "20261106",
+ "fetched_at": "2026-11-12T16:58:51",
+ "n_goods": 604,
+ "n_stores": 630,
+ "n_prices": 116132,
+ "n_goods_failed": 0,
+ "failed": [],
+ "api_calls_price": 606
+}
